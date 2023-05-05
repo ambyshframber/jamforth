@@ -72,7 +72,7 @@
 : LITERAL IMMEDIATE
 	' LIT ,		\ compile LIT
 	,		\ compile the literal itself (from the stack)
-	;
+;
 
 \ Now we can use [ and ] to insert literals which are calculated at compile time.  (Recall that
 \ [ and ] are the FORTH words which switch into and out of immediate mode.)
