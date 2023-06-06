@@ -1019,9 +1019,7 @@
 	With this information we can have a go at decompiling the word.  We need to
 	recognise "meta-words" like LIT, LITSTRING, BRANCH, etc. and treat those separately.
 )
-: SEE
-	WORD FIND	( find the dictionary entry to decompile )
-
+: (SEE)
 	( Now we search again, looking for the next word in the dictionary.  This gives us
 	  the length of the word that we will be decompiling.  (Well, mostly it does). )
 	HERE @		( address of the end of the last compiled word )
@@ -1105,6 +1103,8 @@
 
 	2DROP		( restore stack )
 ;
+
+: SEE WORD FIND (SEE) ;
 
 (
 	EXECUTION TOKENS ----------------------------------------------------------------------

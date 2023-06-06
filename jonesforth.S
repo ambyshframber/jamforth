@@ -1299,10 +1299,13 @@ var_\name :
 	<---------------------- BUFFER_SIZE (4096 bytes) ---------------------->
 */
 
-	defcode "KEY",3,,KEY
+	defcode "(KEY)",5,,KEYIMPL
 	call _KEY
 	push %eax		// push return value on stack
 	NEXT
+	defword "KEY",3,,KEY // prep for cleverer KEY implementation
+	.int KEYIMPL, EXIT
+
 _KEY:
 	mov (currkey),%ebx
 	cmp (bufftop),%ebx
@@ -1498,6 +1501,7 @@ _NUMBER:
 	subb $17,%bl		// < 'A'? (17 is 'A'-'0')
 	jb 4f
 	addb $10,%bl
+	andb $(~32),%bl // zero bit 5. makes it case-insensitive
 
 3:	cmp %dl,%bl		// >= BASE?
 	jge 4f
@@ -2101,6 +2105,38 @@ _COMMA:
         NEXT
 
 /*
+	CALLING FORTH FROM ASSEMBLY
+
+	Through some cleverness with both stacks, %esi, and %eip, we can call any word from an assembly function and have it return back into our assembly function. For this, we need two things: an assembly function (CALLA2F) and a forth word written in assembly (RETF2A).
+
+	CALLA2F gets called with the x86 call instruction, so its return address (which is also where we want the called forth word to return to) is on the parameter stack. The first thing we do is move the return address to the return stack. The next thing we do is move %esi to the return stack and the move the address of of a pointer to RETF2A into %esi. Then, we do a very familiar jump.
+
+	If you don't get why this works, a) I don't blame you and b) go and review the diagrams right at the top of the code.
+*/
+
+CALLA2F:	// %eax = address of callee's CFA
+	pop %ecx
+	PUSHRSP %ecx
+	PUSHRSP %esi
+
+	mov $ptr_RETF2A,%esi // set RETF2A as "next word to be executed"
+	jmp *(%eax) // looks kinda like NEXT
+
+/*
+	RETF2A simply restores the old %esi and moves the assembly return address back to the parameter stack. The x86 return instruction takes care of the rest.
+*/
+
+	defcode "RETF2A",6,F_HIDDEN,RETF2A
+	POPRSP %esi
+	POPRSP %eax
+	push %eax
+	ret
+
+ptr_RETF2A: // this is needed so that it looks like you're executing a word. it makes it so that NEXT jumps to RETF2A
+	.int RETF2A
+
+
+/*
 	LITERAL STRINGS ----------------------------------------------------------------------
 
 	LITSTRING is a primitive used to implement the ." and S" operators (which are written in
@@ -2152,7 +2188,19 @@ _COMMA:
  */
 	defcode "INTERPRET",9,,INTERPRET
 	call _WORD		// Returns %ecx = length, %edi = pointer to word.
+	call _INTERPRET
+	NEXT
 
+	defcode "(INTERPRET)",11,,INTPIMPL
+	pop %ecx
+	pop %edi
+	call _INTERPRET
+	NEXT
+
+// broken out into a separate function that takes a string as input
+_INTERPRET: // %ecx = length, %edi = pointer to word
+	pop %eax
+	PUSHRSP %eax
 	// Is it in the dictionary?
 	xor %eax,%eax
 	movl %eax,interpret_is_lit // Not a literal number (not yet anyway ...)
@@ -2192,7 +2240,10 @@ _COMMA:
 	jz 3f
 	mov %ebx,%eax		// Yes, so LIT is followed by a number.
 	call _COMMA
-3:	NEXT
+3:	
+	POPRSP %eax
+	PUSH %eax
+	ret
 
 4:	// Executing - run it!
 	mov interpret_is_lit,%ecx // Literal?
@@ -2205,7 +2256,9 @@ _COMMA:
 
 5:	// Executing a literal, which means push it on the stack.
 	push %ebx
-	NEXT
+	POPRSP %eax
+	PUSH %eax
+	ret
 
 6:	// Parse error (not a known word or a number in the current BASE).
 	// Print an error message followed by up to 40 characters of context.
@@ -2230,7 +2283,9 @@ _COMMA:
 	mov $__NR_write,%eax	// write syscall
 	int $0x80
 
-	NEXT
+	POPRSP %eax
+	PUSH %eax
+	ret
 
 	.section .rodata
 errmsg: .ascii "PARSE ERROR: "
