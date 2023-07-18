@@ -8,6 +8,8 @@
     ROT
 ;
 
+: BINARY 2 BASE ! ;
+
 : '\r' 13 ;
 : '\t' 9 ;
 
@@ -40,32 +42,42 @@
     R> R> SWAP
 ;
 
+\ string equality
+: S= ( a1 l1 a2 l2 -- 1 if equal | 0 if not )
+    ROT OVER ( a1 a2 l2 l1 l2 )
+    = UNLESS
+        2DROP DROP 0 EXIT \ length doesn't match
+    THEN
+    ( a1 a2 length )
+    BEGIN DUP WHILE
+        -ROT 2DUP C@ SWAP C@ ( length a1 a2 c1 c2 )
+        = UNLESS 
+            2DROP DROP 0 EXIT \ character didn't match
+        THEN
+        1+ SWAP 1+ ROT 1-
+    REPEAT
+    2DROP DROP 1 \ strings were equal
+;
+
 (
     IMMEDIATE IF
 
     The eponymous Jones has left us some homework: "Making [the control structures] work in immediate mode is left as an exercise for the reader."
 
-    The solution I thought of is to compile a temporary word, EXECUTE it, then FORGET it. This requires modifications to IF and THEN, but not ELSE. The main difference is an additional value left on the stack, underneath the address of the 0BRANCH word that gets compiled. This additional value tells THEN whether to compile as normal, or end compilation and execute the word. Conveniently, we can use the xt returned by :NONAME as a flag. 
+    The solution I thought of is to compile a temporary word, EXECUTE it, then FORGET it. This requires modifications to IF and THEN, but not ELSE. The main difference is an additional value left on the stack, underneath the address of the 0BRANCH word that gets compiled. This additional value tells THEN whether to compile as normal, or end compilation and execute the word. Conveniently, we can use the xt returned by :NONAME as a flag.
 )
 
 : IF IMMEDIATE
     STATE @ IF \ compiling
         0 \ leave flag for THEN
-	    ' 0BRANCH , \ compile 0BRANCH
-	    HERE @ \ save location of the offset on the stack
-	    0 , \ compile a dummy offset
     ELSE \ immediate
         :NONAME \ start compiling an anonymous word
-        ' 0BRANCH ,
-        HERE @
-        0 ,
     THEN
+    [COMPILE] IF
 ;
 
 : THEN IMMEDIATE
-	DUP
-	HERE @ SWAP - \ calculate the offset from the address saved on the stack
-	SWAP ! \ store the offset in the back-filled location
+	[COMPILE] THEN
     
     ?DUP IF \ check flag/xt left by IF
         ' EXIT , \ finish off word
@@ -77,3 +89,79 @@
         [COMPILE] [
     THEN
 ;
+DROP \ because the above definition uses the new version of if, it leaves the flag on the stack
+
+: UNLESS IMMEDIATE
+    STATE @ IF \ decide whether to execute or compile NOT based on STATE
+        ' NOT ,
+    ELSE
+        NOT
+    THEN
+    [COMPILE] IF
+;
+
+(
+    IMMEDIATE IFTHEN
+
+    IFTHEN is a control flow word I wrote to make certain conditionals slightly smaller. It goes hand in hand with ULTHEN and IFELSE.
+)
+
+: IFTHEN IMMEDIATE
+    STATE @ IF
+        ' IFTHEN ,
+    ELSE
+        LOOKUPXT SWAP IFELSE EXECUTE DROP
+    THEN
+;
+: ULTHEN IMMEDIATE
+    STATE @ IF
+        ' ULTHEN ,
+    ELSE
+        LOOKUPXT SWAP IFELSE DROP EXECUTE
+    THEN
+;
+
+: IFELSE IMMEDIATE
+    STATE @ IF
+        ' IFELSE ,
+    ELSE
+        LOOKUPXT LOOKUPXT ROT ULTHEN SWAP DROP EXECUTE
+    THEN
+;
+
+(
+    MODULES
+
+    This is a very silly and pretty unnecessary feature. Basically I thought "what if I wanna give the same simple name to multiple words" and then that led to "i can make the dictionary skip a section by frobbing the link pointers" and now we're here.
+)
+
+VARIABLE LATESTMOD
+
+: FINDMOD ( a l -- *mod|0 )
+    LATESTMOD
+    BEGIN ?DUP WHILE
+        DUP DUP >R 16 + C@ 63 AND SWAP 17 + SWAP ( sa sl na nl )
+        2SWAP 2DUP >R >R
+        S= IF
+            RDROP RDROP R> EXIT
+        THEN
+        R> R> R> @
+    REPEAT
+    2DROP 0
+;
+
+(
+    module descriptor "struct"
+
+    0   backpointer to previous module OR null
+    4   word to be selected when enabled
+    8   word to be selected when disabled
+    12  word to have its backpointer changed ("guard word")
+    16  namelen + flags (1 byte)
+    17  name
+
+
+    namelen + flags
+    bits [5,0] = length
+    bit 6 = module enabled (1 when in, 0 when out)
+)
