@@ -800,13 +800,27 @@ code_\label :			// assembler code follows
 */
 
 	defcode "/MOD",4,,DIVMOD
-	xor %edx,%edx
 	pop %ebx
 	pop %eax
+	cdq
 	idivl %ebx
 	push %edx		// push remainder
 	push %eax		// push quotient
 	NEXT
+
+	defcode "SIGNUM",6,,SIGNUM
+	pop %eax
+	test %eax,%eax
+	je 1f
+	cdq
+	shl $1,%edx
+	inc %edx
+	push %edx
+	NEXT
+1:	
+	push $0
+	NEXT
+
 
 /*
 	Lots of comparison operations like =, <, >, etc..
@@ -939,16 +953,18 @@ code_\label :			// assembler code follows
 	NEXT
 
 /* START OF AJAL CODE */
-	defcode "2*",2,,SFTL1 // x -- x<<1
+	defcode "2*",2,,MUL2 // x -- x*2
 	pop %eax
-	shld $1,%eax,%ebx
-	pushl %ebx
+	shl $1,%eax
+	pushl %eax
 	NEXT
 	
-	defcode "2/",2,,SFTR1 // x -- x>>1
+	defcode "2/",2,,DIV2 // x -- x/2
 	pop %eax
-	shrd $1,%eax,%ebx
-	pushl %ebx
+	cdq
+	mov $2,%ebx
+	idivl %ebx
+	push %eax		// push quotient
 	NEXT
 
 	defcode "<<",2,,SFTL // x cnt -- x<<cnt
@@ -1215,6 +1231,9 @@ var_\name :
 	defconst "O_TRUNC",7,,__O_TRUNC,01000
 	defconst "O_APPEND",8,,__O_APPEND,02000
 	defconst "O_NONBLOCK",10,,__O_NONBLOCK,04000
+
+	defconst "0",1,,ZERO,0
+	defconst "1",1,,ONE,1
 
 /*
 	RETURN STACK ----------------------------------------------------------------------
