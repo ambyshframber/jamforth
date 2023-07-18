@@ -336,13 +336,11 @@
 ;
 
 ( This word returns the width (in characters) of an unsigned number in the current base )
-: UWIDTH	( u -- width )
-	BASE @ /	( rem quot )
-	?DUP IF		( if quotient <> 0 then )
-		RECURSE 1+	( return 1+recursive call )
-	ELSE
-		1		( return 1 )
-	THEN
+: UWIDTH
+    1 SWAP
+    BEGIN BASE @ / ?DUP WHILE \ no longer recursive!
+        SWAP 1+ SWAP
+    REPEAT
 ;
 
 : U.R		( u width -- )
@@ -635,7 +633,7 @@
 	diagram above to see what the word that this creates will look like.
 )
 : VARIABLE
-	1 CELLS ALLOT	( allocate 1 cell of memory, push the pointer to this memory )
+	HERE @ 0 ,	( init to zero )
 	WORD CREATE	( make the dictionary entry (the name follows VARIABLE) )
 	DOCOL ,		( append DOCOL (the codeword field of this word) )
 	' LIT ,		( append the codeword LIT )
