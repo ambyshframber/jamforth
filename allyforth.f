@@ -1,3 +1,5 @@
+: [CHAR] IMMEDIATE CHAR [COMPILE] LITERAL ;
+
 : LOOKUPXT WORD FIND >CFA ;
 
 : COUNT ( addr len -- addr len first )
@@ -57,6 +59,17 @@
         1+ SWAP 1+ ROT 1-
     REPEAT
     2DROP DROP 1 \ strings were equal
+;
+
+: (FORGET) \ forget based on pointer, not name
+    DUP @ LATEST !
+	HERE !
+;
+
+: ;TMP IMMEDIATE
+    LATEST @ [COMPILE] LITERAL
+    ' (FORGET) ,
+    [COMPILE] ;
 ;
 
 (
@@ -127,6 +140,19 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
     ELSE
         LOOKUPXT LOOKUPXT ROT ULTHEN SWAP DROP EXECUTE
     THEN
+;
+
+(
+    LOOP WORDS
+
+    I got bored of doing BEGIN ?DUP WHILE all the time so I wrote myself some better loop words.
+)
+
+: DFOR IMMEDIATE
+    [COMPILE] BEGIN
+    ' ?DUP ,
+    [COMPILE] WHILE
+    ' 1- ,
 ;
 
 (

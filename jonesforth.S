@@ -808,6 +808,15 @@ code_\label :			// assembler code follows
 	push %eax		// push quotient
 	NEXT
 
+	defcode "U/MOD",5,,UDIVMOD
+	pop %ebx
+	pop %eax
+	xor %edx,%edx
+	idivl %ebx
+	push %edx		// push remainder
+	push %eax		// push quotient
+	NEXT
+
 	defcode "SIGNUM",6,,SIGNUM
 	pop %eax
 	test %eax,%eax
@@ -2128,9 +2137,11 @@ _COMMA:
 
 	Through some cleverness with both stacks, %esi, and %eip, we can call any word from an assembly function and have it return back into our assembly function. For this, we need two things: an assembly function (CALLA2F) and a forth word written in assembly (RETF2A).
 
-	CALLA2F gets called with the x86 call instruction, so its return address (which is also where we want the called forth word to return to) is on the parameter stack. The first thing we do is move the return address to the return stack. The next thing we do is move %esi to the return stack and the move the address of of a pointer to RETF2A into %esi. Then, we do a very familiar jump.
+	CALLA2F gets called with the x86 call instruction, so its return address (which is also where we want the called forth word to return to) is on the parameter stack. The first thing we do is move the return address to the return stack. The next thing we do is push %esi to the return stack (to save it) and then make %esi point to a pointer to RETF2A. Then, we do a very familiar jump.
 
 	If you don't get why this works, a) I don't blame you and b) go and review the diagrams right at the top of the code.
+
+	This is useful for implementing callbacks.
 */
 
 CALLA2F:	// %eax = address of callee's CFA
@@ -2142,6 +2153,8 @@ CALLA2F:	// %eax = address of callee's CFA
 	jmp *(%eax) // looks kinda like NEXT
 
 /*
+	After CALLA2F, the situation is practically identical to after any word is called in the normal way. %esi points to the next word to execute (as in normal forth execution), and the processor is executing either DOCOL or some assembly code. In either case, the time will soon come when something calls NEXT and executes RETF2A.
+
 	RETF2A simply restores the old %esi and moves the assembly return address back to the parameter stack. The x86 return instruction takes care of the rest.
 */
 
@@ -2174,7 +2187,7 @@ ptr_RETF2A: // this is needed so that it looks like you're executing a word. it 
 	andl $~3,%esi
 	NEXT
 
-	defcode "TELL",4,,TELL
+	defcode "TELL",4,,TELL	// TODO: refactor this and KEY to be Clever
 	mov $1,%ebx		// 1st param: stdout
 	pop %edx		// 3rd param: length of string
 	pop %ecx		// 2nd param: address of string

@@ -303,7 +303,8 @@
 
 ( This is the underlying recursive definition of U. )
 : U.		( u -- )
-	BASE @ /MOD	( width rem quot )
+	BASE @ U/MOD	( width rem quot )
+
 	?DUP IF			( if quotient <> 0 then )
 		RECURSE		( print the quotient )
 	THEN
@@ -323,7 +324,7 @@
 	FORTH word .S prints the contents of the stack.  It doesn't alter the stack.
 	Very useful for debugging.
 )
-: .S		( -- )
+: U.S		( -- )
 	DSP@		( get current stack pointer )
 	BEGIN
 		DUP S0 @ <
@@ -337,10 +338,13 @@
 
 ( This word returns the width (in characters) of an unsigned number in the current base )
 : UWIDTH
-    1 SWAP
-    BEGIN BASE @ / ?DUP WHILE \ no longer recursive!
-        SWAP 1+ SWAP
+	( n )
+    1 BASE @ ROT
+	( ctr base n )
+    BEGIN OVER / ?DUP WHILE \ no longer recursive!
+        ROT 1+ -ROT
     REPEAT
+    DROP
 ;
 
 : U.R		( u width -- )
@@ -392,6 +396,17 @@
 
 ( Finally we can define word . in terms of .R, with a trailing space. )
 : . 0 .R SPACE ;
+
+: .S		( -- )
+	DSP@		( get current stack pointer )
+	BEGIN
+		DUP S0 @ <
+	WHILE
+		DUP @ .	( print the stack element )
+		4+		( move up )
+	REPEAT
+	DROP
+;
 
 ( The real U., note the trailing space. )
 : U. U. SPACE ;
