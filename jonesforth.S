@@ -994,6 +994,11 @@ code_\label :			// assembler code follows
 	sar %ecx,%eax // SIGNED SHIFT
 	pushl %eax
 	NEXT
+
+	defcode "BSR",3,,BSR
+	bsr (%esp),%eax
+	mov %eax,(%esp)
+	NEXT
 /* END OF AJAL CODE */
 
 /*
@@ -2104,33 +2109,33 @@ _COMMA:
 	lodsl			// otherwise we need to skip the offset
 	NEXT
 
-        defcode "IFTHEN",6,,IFTHEN
-        pop %eax
-        test %eax,%eax // check TOS
-        jnz 1f // if true, skip increment
-        add $4,%esi
-1:      NEXT
+	defcode "IFTHEN",6,,IFTHEN
+	pop %eax
+	test %eax,%eax // check TOS
+	jnz 1f // if true, skip increment
+	add $4,%esi
+1:	NEXT
 
-        defcode "ULTHEN",6,,ULTHEN
-        pop %eax
-        test %eax,%eax // check TOS
-        jz 1f // if false, skip increment
-        add $4,%esi
-1:      NEXT
+	defcode "ULTHEN",6,,ULTHEN
+	pop %eax
+	test %eax,%eax // check TOS
+	jz 1f // if false, skip increment
+	add $4,%esi
+1:	NEXT
 
-        defcode "IFELSE",6,,IFELSE // 2-option jump table
-        pop %eax
-        test %eax,%eax // check TOS
-        jz 1f
+	defcode "IFELSE",6,,IFELSE // 2-option jump table
+	pop %eax
+	test %eax,%eax // check TOS
+	jz 1f
 
-        // TOS was true, exec first word
-        lodsl
-        add $4,%esi
-        jmp *(%eax)
+	// TOS was true, exec first word
+	lodsl
+	add $4,%esi
+	jmp *(%eax)
 
-1:      // TOS was false, exec second word
-        add $4,%esi
-        NEXT
+1:	// TOS was false, exec second word
+	add $4,%esi
+	NEXT
 
 /*
 	CALLING FORTH FROM ASSEMBLY

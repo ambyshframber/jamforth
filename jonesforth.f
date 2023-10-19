@@ -49,6 +49,8 @@
 \ and a few other primitives.
 : / /MOD SWAP DROP ;
 : MOD /MOD DROP ;
+: U/ U/MOD SWAP DROP ;
+: UMOD U/MOD DROP ;
 
 \ Define some character constants
 : '\n' 10 ;

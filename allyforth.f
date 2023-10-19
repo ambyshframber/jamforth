@@ -11,6 +11,7 @@
 ;
 
 : BINARY 2 BASE ! ;
+: BIN BINARY ;
 
 : '\r' 13 ;
 : '\t' 9 ;
@@ -64,12 +65,44 @@
 : (FORGET) \ forget based on pointer, not name
     DUP @ LATEST !
 	HERE !
-;
+; \ TODO make this check LATEST points to a word
 
 : ;TMP IMMEDIATE
     LATEST @ [COMPILE] LITERAL
     ' (FORGET) ,
     [COMPILE] ;
+;
+
+\ simple non-secure random number generator
+\ because it's so simple, it's also shit
+: RANDOMC RDTSC DROP DUP 4 >> SWAP 12 >> XOR 255 AND ;
+
+\ less simple and less shit rng based on an lfsr and the timestamp counter
+VARIABLE LFSR
+RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with all zeros
+: ADVANCE_LFSR
+    LFSR @
+    DUP 7 >> XOR 65535 AND
+    DUP 9 << XOR 65535 AND
+    DUP 13 >> XOR 65535 AND
+    LFSR !
+;
+: RAND2
+    LFSR @ 255 AND
+    \ advance the lfsr between 1 and 4 times
+    RANDOMC 3 AND 1+ BEGIN ?DUP WHILE 1- ADVANCE_LFSR REPEAT
+;
+
+: RANDOM \ TODO make this less deep on the stack
+    RAND2 RAND2 RAND2 RAND2
+    8 << OR 8 << OR 8 << OR  
+;
+
+: MAX ( a b -- max )
+    2DUP > IFELSE DROP NIP
+;
+: MIN ( a b -- min )
+    2DUP < IFELSE DROP NIP
 ;
 
 (
@@ -78,6 +111,8 @@
     The eponymous Jones has left us some homework: "Making [the control structures] work in immediate mode is left as an exercise for the reader."
 
     The solution I thought of is to compile a temporary word, EXECUTE it, then FORGET it. This requires modifications to IF and THEN, but not ELSE. The main difference is an additional value left on the stack, underneath the address of the 0BRANCH word that gets compiled. This additional value tells THEN whether to compile as normal, or end compilation and execute the word. Conveniently, we can use the xt returned by :NONAME as a flag.
+
+    It should go without saying that you shouldn't use this for conditional compilation.
 )
 
 : IF IMMEDIATE
@@ -154,6 +189,52 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
     [COMPILE] WHILE
     ' 1- ,
 ;
+
+(
+    INLINE LAMBDAS
+
+    Not really lambdas, but the name is cool.
+
+    CURRENTLY BROKEN
+)
+
+: LAMBDA IMMEDIATE
+    ' BRANCH ,
+    0 ,
+    HERE @
+    DUP 4-
+    .S CR
+    DOCOL ,
+;
+: ADBMAL IMMEDIATE
+    ' EXIT ,
+    HERE @ . CR
+    .S
+    DUP
+	HERE @ SWAP -	\ calculate the offset from the address saved on the stack
+	SWAP !
+    [COMPILE] LITERAL
+;
+
+( dice words for a thing i did once )
+
+: DICE0 ( A B -- BdA ) \ zero indexed dice
+    0 SWAP ( A acc B )
+    DFOR
+        >R OVER ( A acc A )
+        RANDOM SWAP UMOD ( A acc roll )
+        + R>
+    REPEAT
+    NIP
+;
+
+: DICE1 ( A B -- BdA ) \ 1 indexed dice
+    TUCK DICE0 +
+;
+
+: 1DICE0 1 DICE0 ;
+: 1DICE1 1 DICE1 ;
+
 
 (
     MODULES
