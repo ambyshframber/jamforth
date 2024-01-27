@@ -792,6 +792,12 @@ code_\label :			// assembler code follows
 	imull %ebx,%eax
 	push %eax		// ignore overflow
 	NEXT
+	defcode "U*",2,,UMUL
+	pop %eax
+	pop %ebx
+	mull %ebx
+	push %eax		// ignore overflow
+	NEXT
 
 /*
 	In this FORTH, only /MOD is primitive.  Later we will define the / and MOD words in
@@ -961,7 +967,6 @@ code_\label :			// assembler code follows
 	notl (%esp)
 	NEXT
 
-/* START OF AJAL CODE */
 	defcode "2*",2,,MUL2 // x -- x*2
 	pop %eax
 	shl $1,%eax
@@ -999,7 +1004,6 @@ code_\label :			// assembler code follows
 	bsr (%esp),%eax
 	mov %eax,(%esp)
 	NEXT
-/* END OF AJAL CODE */
 
 /*
 	RETURNING FROM FORTH WORDS ----------------------------------------------------------------------
@@ -1188,12 +1192,22 @@ var_\name :
 	S0		Stores the address of the top of the parameter stack.
 	BASE		The current base for printing and reading numbers.
 
+	And then a bonus variable that I added:
+
+	KEYCB		Callback for KEY. When this is zero, KEY executes normally.
+
+	KEYCB is, quite frankly, an ugly hack. It's the simplest way I could think of to allow the user to change where
+	text is read from without gutting the entirety of KEY. This functionality is necessary for implementing
+	EVALUATE.
+
 */
 	defvar "STATE",5,,STATE
 	defvar "HERE",4,,HERE
 	defvar "LATEST",6,,LATEST,name_SYSCALL0 // SYSCALL0 must be last in built-in dictionary
 	defvar "S0",2,,SZ
 	defvar "BASE",4,,BASE,10
+
+	defvar "KEYCB",5,,KEYCB,0
 
 /*
 	BUILT-IN CONSTANTS ----------------------------------------------------------------------
@@ -1333,9 +1347,16 @@ var_\name :
 */
 
 	defcode "(KEY)",5,,KEYIMPL
+	mov var_KEYCB,%eax
+	cmp $0,%eax
+	jnz 1f			// KEYCB is not zero
 	call _KEY
 	push %eax		// push return value on stack
 	NEXT
+1:
+	call CALLA2F
+	NEXT
+
 	defword "KEY",3,,KEY // prep for cleverer KEY implementation
 	.int KEYIMPL, EXIT
 
@@ -2137,10 +2158,19 @@ _COMMA:
 	add $4,%esi
 	NEXT
 
-/*
-	CALLING FORTH FROM ASSEMBLY
+	defcode "AFOR-CHECK",10,,AFORCHECK
+	xor %eax,%eax
+	incl %eax
+	addl (%ebp),%eax
+	cmp 4(%ebp),%eax
+	
 
-	Through some cleverness with both stacks, %esi, and %eip, we can call any word from an assembly function and have it return back into our assembly function. For this, we need two things: an assembly function (CALLA2F) and a forth word written in assembly (RETF2A).
+	NEXT
+
+/*
+	CALLING FORTH FROM ASSEMBLY ----------------------------------------------------------------------
+
+	Through some cleverness with both stacks, %esi, and %eip, we can call any Forth word from an assembly function and have it return back into our assembly function. For this, we need two things: an assembly function (CALLA2F) and a forth word written in assembly (RETF2A).
 
 	CALLA2F gets called with the x86 call instruction, so its return address (which is also where we want the called forth word to return to) is on the parameter stack. The first thing we do is move the return address to the return stack. The next thing we do is push %esi to the return stack (to save it) and then make %esi point to a pointer to RETF2A. Then, we do a very familiar jump.
 

@@ -269,6 +269,15 @@
 	REPEAT
 	DROP
 ;
+: ZEROES	( n -- )
+	BEGIN
+		DUP 0>		( while n > 0 )
+	WHILE
+		'0' EMIT	( print a zero )
+		1-		( until we count down to 0 )
+	REPEAT
+	DROP
+;
 
 ( Standard words for manipulating BASE. )
 : DECIMAL ( -- ) 10 BASE ! ;
@@ -362,6 +371,11 @@
 	( ... and then call the underlying implementation of U. )
 	U.
 ;
+: U.RZ		( u width -- )
+	SWAP DUP UWIDTH		( width u uwidth )
+	ROT SWAP -		( u width-uwidth )
+	ZEROES U.
+;
 
 (
 	.R prints a signed number, padded to a certain width.  We can't just print the sign
@@ -388,6 +402,23 @@
 
 	SPACES		( flag u )
 	SWAP		( u flag )
+
+	IF			( was it negative? print the - character )
+		'-' EMIT
+	THEN
+
+	U.
+;
+
+: .RZ		( n width -- )
+	SWAP DUP 0< IF
+		NEGATE 1 SWAP ROT 1-
+	ELSE
+		0 SWAP ROT
+	THEN
+	SWAP DUP UWIDTH ROT SWAP -
+
+	ZEROES SWAP
 
 	IF			( was it negative? print the - character )
 		'-' EMIT

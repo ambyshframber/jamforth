@@ -9,6 +9,10 @@
     ROT 1-
     ROT
 ;
+: COUNT4 ( addr len -- addr len first )
+    \ like COUNT but with cell-sized data
+    OVER @ ROT 4+ ROT 1- ROT
+;
 
 : BINARY 2 BASE ! ;
 : BIN BINARY ;
@@ -89,7 +93,7 @@ RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with
 ;
 : RAND2
     LFSR @ 255 AND
-    \ advance the lfsr between 1 and 4 times
+    \ advance the lfsr between 1 and 4 times, using a different source of randomness
     RANDOMC 3 AND 1+ BEGIN ?DUP WHILE 1- ADVANCE_LFSR REPEAT
 ;
 
@@ -235,6 +239,44 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 : 1DICE0 1 DICE0 ;
 : 1DICE1 1 DICE1 ;
 
+(
+    BETTER DECOMPILATION
+
+    Jonesforth's SEE segfaults if it encounters a word it doesn't understand, which isn't great. With certain gnarlier dictionary arrangements (not really that gnarly - a simple ALLOT or VARIABLE can break SEE for the previous word) it's completely useless. So, I've made a slightly less failure-prone but also less ergonomic decompiler.
+
+    DC-CELL takes a 32-bit value and prints its signed decimal and unsigned hex values, its value when interpreted as a 4-character ASCII string (replacing non-printing characters with "."), and its name (or "?").
+)
+
+: DC-CELL
+    BASE @ SWAP
+
+    DUP 2DUP
+    HEX 8 U.R
+    DECIMAL 12 .R
+    SPACE
+
+    \ little endian - so first character is the low byte
+    4 DFOR
+        SWAP
+        [ DECIMAL ] DUP 255 AND
+        DUP 32 126 WITHIN
+        UNLESS DROP [CHAR] . THEN EMIT
+        8 >> SWAP
+    REPEAT
+    DROP SPACE
+
+    CFA> ?DUP IF ID. ELSE [CHAR] ? EMIT THEN
+
+    CR
+
+    BASE !
+;
+
+: DC-CELLS ( addr len ) \ len is number of cells, not number of bytes
+    BEGIN ?DUP WHILE
+        COUNT4 DC-CELL
+    REPEAT
+;
 
 (
     MODULES
