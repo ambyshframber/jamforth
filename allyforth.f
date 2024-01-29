@@ -9,6 +9,7 @@
     ROT 1-
     ROT
 ;
+: CCOUNT COUNT ;
 : COUNT4 ( addr len -- addr len first )
     \ like COUNT but with cell-sized data
     OVER @ ROT 4+ ROT 1- ROT
@@ -76,6 +77,8 @@
     ' (FORGET) ,
     [COMPILE] ;
 ;
+
+: ], ] [COMPILE] LITERAL ;
 
 \ simple non-secure random number generator
 \ because it's so simple, it's also shit
@@ -314,3 +317,60 @@ VARIABLE LATESTMOD
     bits [5,0] = length
     bit 6 = module enabled (1 when in, 0 when out)
 )
+
+
+(
+    EVALUATE
+
+    EVALUATE is a word that, given a string, evaluates it. Sounds pretty simple, right? Just iterate over the string and pass each word in turn to (INTERPRET). Well.
+
+    There are many words that call WORD or KEY, such as :, .", S", etc etc. These words will behave oddly when EVALUATEd in this naive fashion, because KEY will still return characters from standard input. The way I chose to solve this is to temporarily override KEY (see jonesforth.S). The short explanation is that you write a callback to KEYCB, which is then called instead of KEY. This callback then needs to remove itself when it's finished, by writing 0 to KEYCB.
+
+    To allow for nested EVALUATEs, there's a stack of strings called EVAL-RECORDS.
+)
+
+16 DUP CONSTANT MAX-EVAL-RECORDS
+2 * CELLS ALLOT CONSTANT EVAL-RECORDS \ 16 levels of nesting
+VARIABLE EVAL-RECORDS-IDX \ record index, not byte index. mul by 2 cells before adding to EVAL-RECORDS
+
+-1 EVAL-RECORDS-IDX ! \ init to -1, because zero means 1 record
+
+: KEY-FROM-BUF ( buf** -- c )
+    DUP @ OVER 4+ @ ( buf** addr len )
+    CCOUNT >R
+    ROT SWAP OVER ( addr buf** len buf** )
+    4+ ! !
+    R>
+;
+
+: KEY-FROM-RECS
+    \ get the current record
+    EVAL-RECORDS EVAL-RECORDS-IDX @ [ 2 CELLS ], * + DUP
+    KEY-FROM-BUF ( buf** c )
+    SWAP 4+ @ ( c len )
+    UNLESS \ if length == 0, decrement idx by 1 and maybe go back to regular KEY
+        EVAL-RECORDS-IDX @ UNLESS
+            0 KEYCB !
+        THEN
+        1 EVAL-RECORDS-IDX -!
+    THEN
+;
+
+: ADD-EVAL-REC ( addr len -- 0 | 1 )
+    EVAL-RECORDS-IDX @ [ MAX-EVAL-RECORDS 1- ], >= IF
+        2DROP 1
+    ELSE
+        EVAL-RECORDS-IDX 1 SWAP +!
+        \." adding rec"
+        EVAL-RECORDS EVAL-RECORDS-IDX @ [ 2 CELLS ], * +
+        \.S CR
+        SWAP OVER 4+ ! !
+        0
+    THEN
+;
+
+: EVALUATE ( addr len )
+    ADD-EVAL-REC
+    IF ." maximum EVALUATE nesting depth reached" QUIT THEN
+    ' KEY-FROM-RECS KEYCB !
+;

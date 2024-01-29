@@ -1346,6 +1346,7 @@ var_\name :
 	<---------------------- BUFFER_SIZE (4096 bytes) ---------------------->
 */
 
+/*
 	defcode "(KEY)",5,,KEYIMPL
 	mov var_KEYCB,%eax
 	cmp $0,%eax
@@ -1356,11 +1357,22 @@ var_\name :
 1:
 	call CALLA2F
 	NEXT
+*/
 
-	defword "KEY",3,,KEY // prep for cleverer KEY implementation
-	.int KEYIMPL, EXIT
+	defcode "KEY",3,,KEY
+	call _KEY
+	push %eax
+	NEXT
 
 _KEY:
+	mov var_KEYCB,%eax
+	cmp $0,%eax
+	jz regular_key			// KEYCB is not zero
+	call CALLA2F
+	pop %eax
+	ret
+
+regular_key:
 	mov (currkey),%ebx
 	cmp (bufftop),%ebx
 	jge 1f			// exhausted the input buffer?
@@ -1381,7 +1393,7 @@ _KEY:
 	jbe 2f
 	addl %eax,%ecx		// buffer+%eax = bufftop
 	mov %ecx,bufftop
-	jmp _KEY
+	jmp regular_key
 
 2:	// Error or end of input: exit the program.
 	mov $0x0a,%eax // newline on exit
