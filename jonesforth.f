@@ -352,7 +352,7 @@
 	( n )
     1 BASE @ ROT
 	( ctr base n )
-    BEGIN OVER / ?DUP WHILE \ no longer recursive!
+    BEGIN OVER U/ ?DUP WHILE \ no longer recursive!
         ROT 1+ -ROT
     REPEAT
     DROP
@@ -1098,6 +1098,8 @@
 		' LIT OF		( is it LIT ? )
 			4 + DUP @		( get next word which is the integer constant )
 			.			( and print it )
+		' XLIT OF		( is it XLIT ? )
+			4 + DUP @ .
 		ENDOF
 		' LITSTRING OF		( is it LITSTRING ? )
 			[ CHAR S ] LITERAL EMIT '"' EMIT SPACE ( print S"<space> )

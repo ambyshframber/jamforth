@@ -568,6 +568,7 @@ _start:
 	mov %esp,var_S0		// Save the initial data stack pointer in FORTH variable S0.
 	mov $return_stack_top,%ebp // Initialise the return stack.
 	call set_up_data_segment
+	finit
 
 	mov $cold_start,%esi	// Initialise interpreter.
 	NEXT			// Run interpreter!
@@ -1006,6 +1007,140 @@ code_\label :			// assembler code follows
 	NEXT
 
 /*
+	FLOATING POINT ----------------------------------------------------------------------
+
+	Floating point is implemented using the x87 instruction set. Back in the Old Days, the x87 was a coprocessor that sat next to your x86 CPU and did floating point operations. Since the i486, it's been included inside the processor itself, and it was superseded by SSE in the late 90s. I'm using it here because it's slightly simpler to understand and uses a stack architecture.
+
+	The x87 has 8 80-bit registers that work as a stack. This is why you don't see operands on many of the x87 instructions used here - they operate on the top values of the stack, just like in FORTH. The words defined here all operate directly on the x87 stack, and are (mostly) prefixed with X (for x87). In allyforth.f I define some convenience functions so you don't have to keep moving things back and forth between the two stacks. The idea is that if you're doing lightweight calculations you can just work directly from the data stack, but when speed/precision are desired, you can keep values inside the x87.
+
+	If you're new to FORTH, just ignore this for the time being and come back later.
+*/
+
+	defcode ">X",2,,FLD_
+	fld (%esp)
+	add $4,%esp
+	NEXT
+	defcode "I>X",3,,FILD_ // thankfully, the x87 can cast between int and float for you
+	fildl (%esp)
+	add $4,%esp
+	NEXT
+	defcode "XF1",3,,FLD1_
+	fld1
+	NEXT
+	defcode "XF0",3,,FLDZ_
+	fldz
+	NEXT
+
+	defcode "X>",2,,FSTP_
+	sub $4,%esp
+	fstp (%esp)
+	NEXT
+	defcode "X>I",3,,FISTP_
+	sub $4,%esp
+	fistpl (%esp)
+	NEXT
+	defcode "X>IT",4,,FISTTP_
+	sub $4,%esp
+	fisttpl (%esp)
+	NEXT
+
+	defcode "XSWAP",5,,FSWAP
+	fxch
+	NEXT
+	defcode "XDROP",5,,FDROP
+	ffree %st(0)
+	fincstp
+	NEXT
+	defcode "XDUP",4,,FDUP
+	fld %st(0)
+	NEXT
+	defcode "XOVER",5,,FOVER
+	fld %st(1)
+	NEXT
+	defcode "XROT",4,,FROT
+	fstp -12(%esp) // TOS
+	fstp -8(%esp) // 2OS
+	fstp -4(%esp) // 3OS
+	fld -8(%esp)
+	fld -12(%esp)
+	fld -4(%esp)
+	NEXT
+	defcode "X-ROT",5,,FNROT
+	fstp -12(%esp) // TOS
+	fstp -8(%esp) // 2OS
+	fstp -4(%esp) // 3OS
+	fld -12(%esp)
+	fld -4(%esp)
+	fld -8(%esp)
+	NEXT
+
+	defcode "FSTSW",5,,FSTSW_
+	xor %eax,%eax
+	fstsw %ax
+	push %eax
+	NEXT
+
+	defcode "XF+",3,,FADDP_
+	faddp
+	NEXT
+	defcode "XF-",3,,FSUBP_
+	fsubrp
+	NEXT
+	defcode "XF*",3,,FMULP_
+	fmulp
+	NEXT
+	defcode "XF/",3,,FDIVP_
+	fdivrp
+	NEXT
+
+	defcode "XFABS",5,,FABS_
+	fabs
+	NEXT
+
+	defcode "XFYL2X",5,,FYL2X_
+	fyl2x
+	NEXT
+
+	defcode "XFLOG2",6,,FLOG2
+	fld1
+	fxch
+	fyl2x
+	NEXT
+
+	defcode "XFLOGN",6,,FLOGN
+	// ( x n )
+	// get log 2 of n
+	fld1 // ( x n 1 )
+	fxch
+	fyl2x // ( x l2n )
+
+	// get recip. of above
+	fld1 // ( x l2n 1 )
+	fdivp // ( x 1/l2n )
+
+	fxch
+	fyl2x
+	NEXT
+
+	defcode "XF1/",4,,FRECIP
+	fld1
+	fdivp
+	NEXT
+
+	defcode "XFSPLIT",7,,FSPLIT // split float into int and frac parts
+	fld %st(0)
+	sub $4,%esp
+	fisttpl (%esp) // int part on data stack
+	fisubl (%esp)
+	NEXT
+
+	defcode "XFI-",4,,FISUB_
+	fisubl (%esp)
+	add $4,%esp
+	NEXT
+	
+
+/*
 	RETURNING FROM FORTH WORDS ----------------------------------------------------------------------
 
 	Time to talk about what happens when we EXIT a function.  In this diagram QUADRUPLE has called
@@ -1073,6 +1208,8 @@ code_\label :			// assembler code follows
 	looks at %esi (which now points to the number 2), grabs it, pushes it on the stack, then
 	manipulates %esi in order to skip the number as if it had never been there.
 
+	XLIT behaves very similarly to LIT, except it pushes the literal value to the x87 stack.
+
 	What's neat is that the whole grab/manipulate can be done using a single byte single
 	i386 instruction, our old friend LODSL.  Rather than me drawing more ASCII-art diagrams,
 	see if you can find out how LIT works:
@@ -1084,6 +1221,11 @@ code_\label :			// assembler code follows
 	// On x86, it's a convenient single byte instruction!  (cf. NEXT macro)
 	lodsl
 	push %eax		// push the literal number on to stack
+	NEXT
+	defcode "XLIT",4,,XLIT
+	lodsl
+	mov %eax,-4(%esp)	// store in what would be the next stack space
+	fld -4(%esp)		// move to x87
 	NEXT
 
 /*
@@ -1192,15 +1334,16 @@ var_\name :
 	S0		Stores the address of the top of the parameter stack.
 	BASE		The current base for printing and reading numbers.
 
-	And then a bonus variable that I added:
+	And then some more that I added:
 
 	KEYCB		Callback for KEY. When this is zero, KEY executes normally.
+	NUMBERCB	Callback for parsing numbers
 
 	KEYCB is, quite frankly, an ugly hack. It's the simplest way I could think of to allow the user to change where
 	text is read from without gutting the entirety of KEY. This functionality is necessary for implementing
 	EVALUATE.
-
 */
+
 	defvar "STATE",5,,STATE
 	defvar "HERE",4,,HERE
 	defvar "LATEST",6,,LATEST,name_SYSCALL0 // SYSCALL0 must be last in built-in dictionary
@@ -1208,6 +1351,7 @@ var_\name :
 	defvar "BASE",4,,BASE,10
 
 	defvar "KEYCB",5,,KEYCB,0
+	defvar "NUMBERCB",8,,NUMBERCB,NUMBER
 
 /*
 	BUILT-IN CONSTANTS ----------------------------------------------------------------------
@@ -1224,7 +1368,14 @@ var_\name :
 	F_HIDDEN	The HIDDEN flag's actual value.
 	F_LENMASK	The length mask in the flags/len byte.
 
-	SYS_*		and the numeric codes of various Linux syscalls (from <asm/unistd.h>)
+	SYS_*		The numeric codes of various Linux syscalls (from <asm/unistd.h>).
+	O_*		The numeric codes of Linux file access options.
+
+	80-some% of constants are zero or one, so making these constants rather than encoding
+	them as LIT 0 and LIT 1 saves some space.
+	
+	0		Zero.
+	1		One.
 */
 
 //#include <asm-i386/unistd.h>	// you might need this instead
@@ -1570,7 +1721,7 @@ _NUMBER:
 	andb $(~32),%bl // zero bit 5. makes it case-insensitive
 
 3:	cmp %dl,%bl		// >= BASE?
-	jge 4f
+	jge 4f			// error
 
 	// OK, so add it to %eax and loop.
 	add %ebx,%eax
@@ -2301,7 +2452,12 @@ _INTERPRET: // %ecx = length, %edi = pointer to word
 
 1:	// Not in the dictionary (not a word) so assume it's a literal number.
 	incl interpret_is_lit
-	call _NUMBER		// Returns the parsed number in %eax, %ecx > 0 if error
+	push %edi
+	push %ecx
+	mov var_NUMBERCB,%eax
+	call CALLA2F
+	pop %ecx
+	pop %eax
 	test %ecx,%ecx
 	jnz 6f
 	mov %eax,%ebx

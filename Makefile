@@ -10,8 +10,8 @@ all:	jonesforth
 jonesforth: jonesforth.S
 	gcc -m32 -nostdlib -static $(BUILD_ID_NONE) -I /usr/include/x86_64-linux-gnu -o $@ $<
 
-run:
-	cat jonesforth.f $(PROG) - | ./jonesforth
+run: all
+	cat jonesforth.f allyforth.f $(PROG) - | ./jonesforth
 
 clean:
 	rm -f jonesforth perf_dupdrop *~ core .test_*
