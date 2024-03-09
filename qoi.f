@@ -1,0 +1,105 @@
+: QOI-ENC-ENABLE-ALPHA ( *buf )
+    12 + 4 SWAP !
+;
+
+66 CELLS ALLOT CONSTANT QOI_ENCODER
+
+.S
+
+: QOI_ENC_RESET
+    0 QOI_ENCODER 66 MEMSET
+;
+
+: QOI_ENC_INIT ( w h *write -- *write )
+    DUP >R
+    ROT SWAP QOI_ENCODER (QOI_ENC_INIT)
+    R> 14 +
+;
+
+: QOI_ENCODE ( px *write -- *write )
+    TUCK QOI_ENCODER
+    (QOI_ENCODE)
+    +
+;
+
+: QOI_ENC_FINISH ( *write -- *write )
+    DUP QOI_ENCODER (QOI_ENC_FINISH)
+    +
+;
+
+S" output.qoi" DUP HERE +! ALIGN
+SWAP
+
+: EXPORT_FILENAME
+    LITERAL LITERAL
+;
+
+: EXPORT
+    420
+    O_CREAT O_TRUNC OR R/W OR
+    Z" output.qoi"
+    SYS_OPEN SYSCALL3
+    .S CR
+    DUP >R
+    WRITE-FILE
+    R> CLOSE-FILE
+;
+
+0 ,
+H# AA ,
+H# AA00 ,
+H# 55AA ,
+
+H# AA0000 ,
+H# AA00AA ,
+H# AAAA00 ,
+H# AAAAAA ,
+
+H# 555555 ,
+H# 5555FF ,
+H# 55FF55 ,
+H# 55FFFF ,
+
+H# FF5555 ,
+H# FF55FF ,
+H# FFFF55 ,
+H# FFFFFF ,
+
+HERE @ 16 CELLS - CONSTANT 4_BIT_TABLE
+
+: 4_BIT_COLOUR ( c4 -- c24 )
+    CELLS 4_BIT_TABLE + @
+;
+
+: ENCODE_BYTE ( *write c -- *write )
+    TUCK 15 AND 4_BIT_COLOUR
+    SWAP QOI_ENCODE
+
+    SWAP 4 >> 15 AND 4_BIT_COLOUR
+    SWAP QOI_ENCODE
+;
+
+HEX
+
+HERE @ FF + FF INVERT AND DUP HERE !
+CONSTANT DATA_SEG_FINISH
+
+: F ( *write -- *write )
+    DATA_SEG_START
+    BEGIN DUP DATA_SEG_FINISH < WHILE
+        ( *write idx )
+        TUCK C@ ENCODE_BYTE
+        SWAP 1+
+    REPEAT
+    DROP
+;
+
+QOI_ENC_RESET
+HERE @
+80 DATA_SEG_FINISH DATA_SEG_START - 80 /
+HERE @ QOI_ENC_INIT
+F
+QOI_ENC_FINISH
+OVER -
+\2DUP DUMP
+EXPORT

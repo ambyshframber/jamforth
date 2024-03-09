@@ -15,14 +15,6 @@
 	OVER @ ROT 4+ ROT 1- ROT
 ;
 
-: ** ( a b -- a**b )
-	1 SWAP ( a 1 b )
-	DFOR
-		-ROT OVER * ROT
-	REPEAT
-	( a a**b )
-	NIP
-;
 
 : MAX ( a b -- max )
 	2DUP > IFELSE DROP NIP
@@ -100,13 +92,14 @@
 
 : ], ] [COMPILE] LITERAL ;
 
+(
 \ simple non-secure random number generator
 \ because it's so simple, it's also shit
 : RANDOMC RDTSC DROP DUP 4 >> SWAP 12 >> XOR 255 AND ;
 
 \ less simple and less shit rng based on an lfsr and the timestamp counter
 VARIABLE LFSR
-RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with all zeros
+\RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with all zeros
 : ADVANCE_LFSR
 	LFSR @
 	DUP 7 >> XOR 65535 AND
@@ -124,7 +117,36 @@ RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with
 	RAND2 RAND2 RAND2 RAND2
 	8 << OR 8 << OR 8 << OR  
 ;
+)
 
+\ better rng that just uses /dev/urandom
+
+S" /dev/urandom" R/O OPEN-FILE DROP
+CONSTANT URANDOM-FD
+
+DECIMAL
+
+512 ALLOT CONSTANT RANDOM-BUF
+
+VARIABLE RANDOM-BUF-IDX
+
+: READ-RANDOM
+	RANDOM-BUF 512 URANDOM-FD READ-FILE 2DROP
+;
+READ-RANDOM
+
+: RANDOM
+	RANDOM-BUF-IDX DUP @ DUP ( *rbi rbi rbi )
+	RANDOM-BUF + @ ( *rbi rbi v )
+	.S CR
+	-ROT 4+ DUP 512 >= IF
+		." refill random buffer"
+		READ-RANDOM
+		DROP 0 SWAP !
+	ELSE
+		SWAP !
+	THEN
+;
 
 (
 	IMMEDIATE IF ----------------------------------------------------------------------
@@ -211,6 +233,16 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	' 1- ,
 ;
 
+: ** ( a b -- a**b )
+	1 SWAP ( a 1 b )
+	DFOR
+		-ROT OVER * ROT
+	REPEAT
+	( a a**b )
+	NIP
+;
+
+
 (
 	INLINE LAMBDAS
 
@@ -264,12 +296,35 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	DC-CELL takes a 32-bit value and prints its signed decimal and unsigned hex values, its value when interpreted as a 4-character ASCII string (replacing non-printing characters with "."), and its name (or "?").
 )
 
-: DC-CELL
+37 ALLOT CONSTANT SFIGS
+ALIGN
+: GEN-SFIGS
+	35 DFOR
+		DUP 2 +
+		DUP BASE !
+		[ HEX ffffffff ], UWIDTH
+		SWAP SFIGS + C!
+	REPEAT
+;
+GEN-SFIGS
+DEC
+FORGET GEN-SFIGS
+
+: DC-CELL ( v )
 	BASE @ SWAP
 
-	DUP 2DUP
-	HEX 8 U.RZ
-	DECIMAL 12 .R
+	DUP HEX 8 U.R
+	DUP DECIMAL 12 .R
+	(
+	( b v )
+	SWAP DUP BASE !
+	DUP DUP 16 = SWAP 10 = OR UNLESS
+		SFIGS + C@ 2 + .R
+	THEN
+	)
+	SWAP BASE !
+	DUP
+	
 	SPACE
 
 	\ little endian - so first character is the low byte
@@ -282,11 +337,15 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	REPEAT
 	DROP SPACE
 
-	CFA> ?DUP IF ID. ELSE [CHAR] ? EMIT THEN
+	DUP LATEST @ < IF
+		CFA> ?DUP IF ID. ELSE
+			[CHAR] ? EMIT
+		THEN
+	ELSE
+		DROP [CHAR] ? EMIT
+	THEN
 
 	CR
-
-	BASE !
 ;
 
 : DC-CELLS ( addr len ) \ len is number of cells, not number of bytes
@@ -349,14 +408,24 @@ VARIABLE LATESTMOD
 
 	There are many words that call WORD or KEY, such as :, .", S", etc etc. These words will behave oddly when EVALUATEd in this naive fashion, because KEY will still return characters from standard input. The way I chose to solve this is to temporarily override KEY (see jonesforth.S). The short explanation is that you write a callback to KEYCB, which is then called instead of KEY. This callback then needs to remove itself when it's finished, by writing 0 to KEYCB.
 
-	To allow for nested EVALUATEs, there's a stack of strings called EVAL-RECORDS.
+	EVAL_RECORD
+		0	addr
+		4	len
+		8	read_idx
+		12	refill
+
+	refill is either an xt (hence bits 0 and 1 are clear), OR a file descriptor shifted left 2 and ORed with 1. If it's a function, the function is executed. If it's an fd the buffer is refilled by reading from it.
+
+	Jonesforth's base KEY can actually be implemented in this fashion. 
+
+	To allow for nested EVALUATEs, there's a stack of strings and callbacks called EVAL_RECORDS. The callbacks (if present) are executed when the string they are paired with is empty.
 )
 
-16 DUP CONSTANT MAX-EVAL-RECORDS
-2 * CELLS ALLOT CONSTANT EVAL-RECORDS \ 16 levels of nesting
-VARIABLE EVAL-RECORDS-IDX \ record index, not byte index. mul by 2 cells before adding to EVAL-RECORDS
+16 DUP CONSTANT MAX_EVAL_RECORDS
+4 * CELLS ALLOT CONSTANT EVAL_RECORDS \ 16 levels of nesting
+VARIABLE EVAL_RECORDS_IDX \ record index, not byte index. mul by 4 cells before adding to EVAL_RECORDS
 
--1 EVAL-RECORDS-IDX ! \ init to -1, because zero means 1 record
+-1 EVAL_RECORDS_IDX ! \ init to -1, because zero means 1 record
 
 : KEY-FROM-BUF ( buf** -- c )
 	DUP @ OVER 4+ @ ( buf** addr len )
@@ -368,24 +437,24 @@ VARIABLE EVAL-RECORDS-IDX \ record index, not byte index. mul by 2 cells before 
 
 : KEY-FROM-RECS
 	\ get the current record
-	EVAL-RECORDS EVAL-RECORDS-IDX @ [ 2 CELLS ], * + DUP
+	EVAL_RECORDS EVAL_RECORDS_IDX @ [ 4 CELLS ], * + DUP
 	KEY-FROM-BUF ( buf** c )
 	SWAP 4+ @ ( c len )
 	UNLESS \ if length == 0, decrement idx by 1 and maybe go back to regular KEY
-		EVAL-RECORDS-IDX @ UNLESS
+		EVAL_RECORDS_IDX @ UNLESS
 			0 KEYCB !
 		THEN
-		1 EVAL-RECORDS-IDX -!
+		1 EVAL_RECORDS_IDX -!
 	THEN
 ;
 
 : ADD-EVAL-REC ( addr len -- 0 | 1 ) \ 1 on failure
-	EVAL-RECORDS-IDX @ [ MAX-EVAL-RECORDS 1- ], >= IF
+	EVAL_RECORDS_IDX @ [ MAX_EVAL_RECORDS 1- ], >= IF
 		2DROP 1
 	ELSE
-		EVAL-RECORDS-IDX 1 SWAP +!
+		EVAL_RECORDS_IDX 1 SWAP +!
 		\." adding rec"
-		EVAL-RECORDS EVAL-RECORDS-IDX @ [ 2 CELLS ], * +
+		EVAL_RECORDS EVAL_RECORDS_IDX @ [ 4 CELLS ], * +
 		\.S CR
 		SWAP OVER 4+ ! !
 		0
@@ -398,7 +467,7 @@ VARIABLE EVAL-RECORDS-IDX \ record index, not byte index. mul by 2 cells before 
 		\ just fucking panic back to the prompt
 		." maximum EVALUATE nesting depth reached"
 		0 KEYCB !
-		-1 EVAL-RECORDS-IDX !
+		-1 EVAL_RECORDS_IDX !
 		QUIT
 	THEN
 	' KEY-FROM-RECS KEYCB !
@@ -455,9 +524,13 @@ MKXDBN XF/
 
 MKXDU XF1/
 MKXDU XFSPLIT
+MKXDU XFNEGATE
+MKXDU XFABS
 
 MKXDU XFLOG2
 MKXDBN XFLOGN
+
+: FSIGNUM [ HEX 80000000 DEC ], AND 31 >> NOT ;
 
 : F**I ( a b -- a**b )
 	SWAP >X XF**I X>
@@ -466,55 +539,103 @@ MKXDBN XFLOGN
 : F0 XF0 X> ;
 : F1 XF1 X> ;
 
-: F> >X X>I ;
+: F>I >X X>I ;
 : F>T >X X>IT ;
-: >F I>X X> ;
+: I>F I>X X> ;
 
 : XF.P ( D: rel_recision -- , X: x -- )
-	XDUP BASE @ I>X XFLOGN ( X: x log_b(x) )
+	XDUP XFABS BASE @ I>X XFLOGN ( X: x log_b(x) )
 	X>IT NEGATE + 1 MAX XF.A
 ;
 : F.P SWAP >X XF.P ;
 
-H# 4b800000 CONSTANT 2**24
-: F. 2**24 BASE @ >F FLOGN F>T F.P SPACE ;
+HEX 4b800000 DEC CONSTANT 2**24
+: F. 2**24 BASE @ I>F FLOGN F>T F.P SPACE ;
+
+: INTEGER NUMBER ;
 
 : NUMBER ( a l -- n x ) \ x is number of unparsed characters
-	2DUP NUMBER ( a l n x )
+	OVER C@ [CHAR] - = IF \ do negativeness manually
+		COUNTC DROP
+		1
+	ELSE
+		0
+	THEN
+	-ROT
+
+	2DUP NUMBER ( neg a l n x )
 	?DUP UNLESS
+		( neg a l n )
 		\ number parsed fully
-		-ROT 2DROP 0
+		-ROT 2DROP SWAP IFTHEN NEGATE 0 EXIT
 	THEN
 
-	SWAP BASE @ / >R \ stash value
-	( a l1 l2 )
-	TUCK - ( a l2 y )
+	SWAP BASE @ / >R \ correct and stash value
+	( neg a l1 l2 )
+	TUCK - ( neg a l2 y )
 
 	ROT + DUP C@ [CHAR] . = UNLESS
+		ROT DROP
 		DROP R> SWAP EXIT
 	THEN
 
-	SWAP COUNTC DROP ( a l )
+	SWAP COUNTC DROP ( neg a l )
 
 	?DUP UNLESS \ length of frac part is 0
-		DROP R> >F 0 EXIT
+		DROP R> SWAP IFTHEN NEGATE I>F 0 EXIT
 	THEN
 
-	DUP -ROT NUMBER ( l n2 x )
+	DUP -ROT NUMBER ( neg l n2 x )
 
 	?DUP UNLESS \ fully parsed
-		( l n2 )
-		SWAP R> -ROT FLT 0 EXIT
+		( neg l n2 )
+		SWAP R> -ROT FLT SWAP IFTHEN FNEGATE 0 EXIT
 	THEN
 
-	( l n2 x )
-	ROT DROP RDROP
+	( neg l n2 x )
+	ROT DROP ROT DROP RDROP
 ;
+LATEST @ >CFA NUMBERCB !
 
-LOOKUPXT NUMBER NUMBERCB !
+: XFSF> ( D: i -- , X: f -- f )
+	BASE @ I>X XF**I XF*
+;
+: FSF> ( f i -- f )
+	SWAP >X XFSF> X>
+;
 
 : # WORD NUMBER DROP ;
 : H# BASE @ HEX # SWAP BASE ! ;
 
 : XLITERAL IMMEDIATE ' XLIT , ,	;
 : ]X, ] [COMPILE] XLITERAL ;
+
+: XF<
+	XFCMP FSTSW
+	[ BIN 0100010100000000 DEC ],
+	AND 0=
+;
+: XF> XF< NOT ;
+
+: F< >X >X XF< NOT ; \ order on stack swaps
+: F> >X >X XF< ;
+
+S" /dev/stdin" R/O OPEN-FILE DROP
+
+
+HEX
+HERE @ SWAP
+, 1 , \ fd 0, watch for POLLIN
+CONSTANT STDIN_POLLFD
+
+DUP CONSTANT DATA_SEG_START
+
+DEC
+HERE @ SWAP - DUP
+." forth code used " . ." bytes (" 4 / . ." cells)" CR
+
+GET-BRK HERE @ -
+DUP . ." bytes (" 4 / . ." cells) remaining" CR
+." OK" CR
+
+

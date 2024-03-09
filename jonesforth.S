@@ -631,6 +631,7 @@ DOUBLE: .int DOCOL		// codeword
 
 	.macro defword name, namelen, flags=0, label
 	.section .rodata
+	//.data
 	.align 4
 	.globl name_\label
 name_\label :
@@ -793,11 +794,17 @@ code_\label :			// assembler code follows
 	imull %ebx,%eax
 	push %eax		// ignore overflow
 	NEXT
-	defcode "U*",2,,UMUL
+	defcode "W*",2,,WMUL
+	pop %eax
+	pop %ebx
+	imull %ebx
+	push %edx
+	NEXT
+	defcode "UW*",3,,UWMUL
 	pop %eax
 	pop %ebx
 	mull %ebx
-	push %eax		// ignore overflow
+	push %edx
 	NEXT
 
 /*
@@ -1013,21 +1020,23 @@ code_\label :			// assembler code follows
 
 	The x87 has 8 80-bit registers that work as a stack. This is why you don't see operands on many of the x87 instructions used here - they operate on the top values of the stack, just like in FORTH. The words defined here all operate directly on the x87 stack, and are (mostly) prefixed with X (for x87). In allyforth.f I define some convenience functions so you don't have to keep moving things back and forth between the two stacks. The idea is that if you're doing lightweight calculations you can just work directly from the data stack, but when speed/precision are desired, you can keep values inside the x87.
 
+	Most FORTHs use rational or fixed-precision arithmetic for non-integer values, but float is just convenient, and the x87 is right there ready to use.
+
 	If you're new to FORTH, just ignore this for the time being and come back later.
 */
 
 	defcode ">X",2,,FLD_
-	fld (%esp)
+	fld (%esp)		// take a 32-bit floating point number from the parameter stack and push it to the x87 stack
 	add $4,%esp
 	NEXT
-	defcode "I>X",3,,FILD_ // thankfully, the x87 can cast between int and float for you
-	fildl (%esp)
+	defcode "I>X",3,,FILD_ 	// thankfully, the x87 can cast between int and float for you
+	fildl (%esp)		// take a 32-bit int from the data stack, convert it to a float, and push it to the x87
 	add $4,%esp
 	NEXT
-	defcode "XF1",3,,FLD1_
+	defcode "XF1",3,,FLD1_	// load constant 1
 	fld1
 	NEXT
-	defcode "XF0",3,,FLDZ_
+	defcode "XF0",3,,FLDZ_	// load constant 0
 	fldz
 	NEXT
 
@@ -1039,25 +1048,26 @@ code_\label :			// assembler code follows
 	sub $4,%esp
 	fistpl (%esp)
 	NEXT
-	defcode "X>IT",4,,FISTTP_
+	defcode "X>IT",4,,FISTTP_ // store with truncation, not rounding
 	sub $4,%esp
 	fisttpl (%esp)
 	NEXT
 
-	defcode "XSWAP",5,,FSWAP
+	// standard stack manipulation stuff
+	defcode "XSWAP",5,,XSWAP
 	fxch
 	NEXT
-	defcode "XDROP",5,,FDROP
+	defcode "XDROP",5,,XDROP
 	ffree %st(0)
 	fincstp
 	NEXT
-	defcode "XDUP",4,,FDUP
+	defcode "XDUP",4,,XDUP
 	fld %st(0)
 	NEXT
-	defcode "XOVER",5,,FOVER
+	defcode "XOVER",5,,XOVER
 	fld %st(1)
 	NEXT
-	defcode "XROT",4,,FROT
+	defcode "XROT",4,,XROT
 	fstp -12(%esp) // TOS
 	fstp -8(%esp) // 2OS
 	fstp -4(%esp) // 3OS
@@ -1065,7 +1075,7 @@ code_\label :			// assembler code follows
 	fld -12(%esp)
 	fld -4(%esp)
 	NEXT
-	defcode "X-ROT",5,,FNROT
+	defcode "X-ROT",5,,XNROT
 	fstp -12(%esp) // TOS
 	fstp -8(%esp) // 2OS
 	fstp -4(%esp) // 3OS
@@ -1074,40 +1084,67 @@ code_\label :			// assembler code follows
 	fld -8(%esp)
 	NEXT
 
+	// The x87 status word is used for such things as the result of comparisons, exceptions,
+	// and whether operations completed fully.
 	defcode "FSTSW",5,,FSTSW_
 	xor %eax,%eax
 	fstsw %ax
 	push %eax
 	NEXT
 
-	defcode "XF+",3,,FADDP_
+	.data
+fcw_scratch:
+	.int 0
+
+	defcode "FSTCW",5,,FSTCW_
+	fstcw fcw_scratch
+	mov fcw_scratch,%eax // why do i have to do this. why has god abandoned me
+	push %eax
+	NEXT	
+	defcode "FLDCW",5,,FLDCW_
+	pop %eax
+	mov %eax,fcw_scratch
+	fldcw fcw_scratch
+	NEXT
+
+	defcode "XF+",3,,XFADD
 	faddp
 	NEXT
-	defcode "XF-",3,,FSUBP_
+	defcode "XF-",3,,XFSUB
 	fsubrp
 	NEXT
-	defcode "XF*",3,,FMULP_
+	defcode "XF*",3,,XFMUL
 	fmulp
 	NEXT
-	defcode "XF/",3,,FDIVP_
+	defcode "XF/",3,,XFDIV
 	fdivrp
 	NEXT
 
-	defcode "XFABS",5,,FABS_
+	defcode "XFCMP",5,,XFCMP
+	fcompp
+	NEXT
+	defcode "XFCMP0",6,,XFCMP0
+	ftst // there's no ftstp. why is there no ftstp, intel?
+	ffree %st(0)
+	fincstp
+	NEXT
+
+	defcode "XFNEGATE",8,,XFNEGATE
+	fchs
+	NEXT
+	defcode "XFABS",5,,XFABS
 	fabs
 	NEXT
 
-	defcode "XFYL2X",5,,FYL2X_
+	defcode "XFYL2X",5,,XFYL2X
 	fyl2x
 	NEXT
-
-	defcode "XFLOG2",6,,FLOG2
+	defcode "XFLOG2",6,,XFLOG2
 	fld1
 	fxch
 	fyl2x
 	NEXT
-
-	defcode "XFLOGN",6,,FLOGN
+	defcode "XFLOGN",6,,XFLOGN
 	// ( x n )
 	// get log 2 of n
 	fld1 // ( x n 1 )
@@ -1122,19 +1159,43 @@ code_\label :			// assembler code follows
 	fyl2x
 	NEXT
 
-	defcode "XF1/",4,,FRECIP
+	defcode "X2XM1",5,,X2XM1
+	f2xm1
+	NEXT
+	defcode "X2EXP",5,,X2EXP
+	
+	NEXT
+	defcode "XLN",3,,XLN
+	fldl2e // ( x l2e )
+	fld1
+	fdivp
+	fxch
+	fyl2x
+	NEXT
+	defcode "XLN/LN2",7,,XLNLN2
+	fldl2e // ( x l2e )
+	fld1
+	fdivp
+	fxch
+	fyl2x
+
+	fldln2
+	fdivp
+	NEXT
+
+	defcode "XF1/",4,,XFRECIP
 	fld1
 	fdivp
 	NEXT
 
-	defcode "XFSPLIT",7,,FSPLIT // split float into int and frac parts
+	defcode "XFSPLIT",7,,XFSPLIT // split float into int and frac parts
 	fld %st(0)
 	sub $4,%esp
 	fisttpl (%esp) // int part on data stack
 	fisubl (%esp)
 	NEXT
 
-	defcode "XFI-",4,,FISUB_
+	defcode "XFI-",4,,XFISUB
 	fisubl (%esp)
 	add $4,%esp
 	NEXT
@@ -1280,6 +1341,19 @@ code_\label :			// assembler code follows
 	push %eax		// push value onto stack
 	NEXT
 
+	defcode "S!",2,,STORESHORT
+	pop %ebx		// address to store at
+	pop %eax		// data to store there
+	movw %ax,(%ebx)		// store it
+	NEXT
+
+	defcode "S@",2,,FETCHSHORT
+	pop %ebx		// address to fetch
+	xor %eax,%eax
+	movw (%ebx),%ax		// fetch it
+	push %eax		// push value onto stack
+	NEXT
+
 /* C@C! is a useful byte copy primitive. */
 	defcode "C@C!",4,,CCOPY
 	movl 4(%esp),%ebx	// source address
@@ -1291,13 +1365,34 @@ code_\label :			// assembler code follows
 	NEXT
 
 /* and CMOVE is a block copy operation. */
-	defcode "CMOVE",5,,CMOVE
+	defcode "CMEMCPY",7,,CMOVE
 	mov %esi,%edx		// preserve %esi
 	pop %ecx		// length
 	pop %edi		// destination address
 	pop %esi		// source address
 	rep movsb		// copy source to destination
 	mov %edx,%esi		// restore %esi
+	NEXT
+	defcode "MEMCPY",6,,MOVE
+	mov %esi,%edx		// preserve %esi
+	pop %ecx		// length
+	pop %edi		// destination address
+	pop %esi		// source address
+	rep movsl		// copy source to destination
+	mov %edx,%esi		// restore %esi
+	NEXT
+
+	defcode "CMEMSET",7,,CMEMSET
+	pop %ecx
+	pop %edi
+	pop %eax
+	rep stosb
+	NEXT
+	defcode "MEMSET",6,,MEMSET
+	pop %ecx
+	pop %edi
+	pop %eax
+	rep stosl
 	NEXT
 
 /*
@@ -1401,6 +1496,9 @@ var_\name :
 	defconst "SYS_WRITE",9,,SYS_WRITE,__NR_write
 	defconst "SYS_CREAT",9,,SYS_CREAT,__NR_creat
 	defconst "SYS_BRK",7,,SYS_BRK,__NR_brk
+	defconst "SYS_FSTAT",9,,SYS_FSTAT,__NR_fstat
+	defconst "SYS_POLL",8,,SYS_POLL,__NR_poll
+	defconst "SYS_GETTIMEOFDAY",16,,SYS_GETTIMEOFDAY,__NR_gettimeofday
 
 	defconst "O_RDONLY",8,,__O_RDONLY,0
 	defconst "O_WRONLY",8,,__O_WRONLY,1
@@ -2424,6 +2522,8 @@ ptr_RETF2A: // this is needed so that it looks like you're executing a word. it 
 	defcode "(INTERPRET)",11,,INTPIMPL
 	pop %ecx
 	pop %edi
+	mov $65,%eax
+	call _EMIT
 	call _INTERPRET
 	NEXT
 
@@ -2531,6 +2631,31 @@ errmsgnl: .ascii "\n"
 	.align 4
 interpret_is_lit:
 	.int 0			// Flag used to record if reading a literal
+
+/*
+	QOI ----------------------------------------------------------------------
+
+	QOI is a compressed image format.
+*/
+
+	defcode "(QOI_ENC_INIT)",14,,QOI_ENC_INIT_F // ( h w *buf *q )
+	call qoi_enc_init
+	add $16,%esp
+	NEXT
+
+	// pixel red channel is in LSB
+	// RGBA when laid out in memory, little endian
+	defcode "(QOI_ENCODE)",12,,QOI_ENCODE_F // ( pixel *buf *q )
+	call qoi_encode
+	add $8,%esp
+	mov %eax,(%esp)
+	NEXT
+
+	defcode "(QOI_ENC_FINISH)",16,,QOI_ENC_FINISH_F // ( *buf *q )
+	call qoi_enc_finish
+	add $4,%esp
+	mov %eax,(%esp)
+	NEXT
 
 /*
 	ODDS AND ENDS ----------------------------------------------------------------------

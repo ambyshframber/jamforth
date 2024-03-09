@@ -7,8 +7,10 @@ SHELL	:= /bin/bash
 
 all:	jonesforth
 
-jonesforth: jonesforth.S
-	gcc -m32 -nostdlib -static $(BUILD_ID_NONE) -I /usr/include/x86_64-linux-gnu -o $@ $<
+# --verbose -Wl,--verbose
+
+jonesforth: jonesforth.S qoi.c
+	gcc -m32 -nostdlib -static $(BUILD_ID_NONE) -I /usr/include/x86_64-linux-gnu -o $@ jonesforth.S qoi.c
 
 run: all
 	cat jonesforth.f allyforth.f $(PROG) - | ./jonesforth

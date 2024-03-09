@@ -44,6 +44,8 @@
 \
 \	FORTH is case-sensitive.  Use capslock!
 
+HERE @
+
 \ The primitive word /MOD (DIVMOD) leaves both the quotient and the remainder on the stack.  (On
 \ i386, the idivl instruction gives both anyway).  Now we can define the / and MOD in terms of /MOD
 \ and a few other primitives.
@@ -1098,6 +1100,7 @@
 		' LIT OF		( is it LIT ? )
 			4 + DUP @		( get next word which is the integer constant )
 			.			( and print it )
+		ENDOF
 		' XLIT OF		( is it XLIT ? )
 			4 + DUP @ .
 		ENDOF
@@ -1493,7 +1496,7 @@
 : CSTRING	( addr len -- c-addr )
 	SWAP OVER	( len saddr len )
 	HERE @ SWAP	( len saddr daddr len )
-	CMOVE		( len )
+	CMEMCPY		( len )
 
 	HERE @ +	( daddr+len )
 	0 SWAP C!	( store terminating NUL char )
@@ -1595,12 +1598,19 @@
 	call MORECORE if necessary.  A simple programming exercise is to change the
 	implementation of the data segment so that MORECORE is called automatically if
 	the program needs more memory.
+
+	Second NB. If you do man brk, you'll get a page that tells you the brk syscall
+	returns 0 on success and -1 on failure. If you scroll down a bit, however, you'll
+	soon find that the raw Linux syscall actually returns the new program break (or the
+	old one, if the operation failed). libc neatly abstracts over this, so I did the
+	same here.
 )
-: BRK		( brkpoint -- )
-	SYS_BRK SYSCALL1
+: BRK		( brkpoint -- success )
+	DUP	SYS_BRK SYSCALL1 ( desired actual )
+	>= 1-
 ;
 
-: MORECORE	( cells -- )
+: MORECORE	( cells -- success )
 	CELLS GET-BRK + BRK
 ;
 
@@ -1650,8 +1660,20 @@
 ;
 
 : READ-FILE	( addr u fd -- u2 0 (if successful) | addr u fd -- 0 0 (if EOF) | addr u fd -- u2 errno (if error) )
-	>R SWAP R>	( u addr fd )
+	ROT SWAP	( u addr fd )
 	SYS_READ SYSCALL3
+
+	DUP		( u2 u2 )
+	DUP 0< IF	( errno? )
+		NEGATE		( u2 errno )
+	ELSE
+		DROP 0		( u2 0 )
+	THEN
+;
+
+: WRITE-FILE ( addr u fd -- (see READ-FILE) )
+	ROT SWAP	( u addr fd )
+	SYS_WRITE SYSCALL3
 
 	DUP		( u2 u2 )
 	DUP 0< IF	( errno? )
