@@ -1,7 +1,5 @@
 : [CHAR] IMMEDIATE CHAR [COMPILE] LITERAL ;
 
-: LOOKUPXT WORD FIND >CFA ;
-
 : COUNT ( addr len -- addr len first )
 	( get the first character of a string and advance the string pointer )
 	OVER C@
@@ -15,6 +13,9 @@
 	OVER @ ROT 4+ ROT 1- ROT
 ;
 
+: 2@ DUP @ SWAP 4+ @ ;
+: 2? 2@ SWAP . . ;
+: 2! TUCK 4+ ! ! ;
 
 : MAX ( a b -- max )
 	2DUP > IFELSE DROP NIP
@@ -30,10 +31,18 @@
 : H. BASE @ HEX SWAP . BASE ! ; \ useful for debugging
 : HU. BASE @ HEX SWAP U. BASE ! ;
 
+: # IMMEDIATE
+	." # executing" CR
+	WORD NUMBER DROP
+	DUP . CR
+	STATE @ IF [COMPILE] LITERAL THEN
+;
+: H# IMMEDIATE BASE @ HEX [COMPILE] # BASE ! ;
+
 : '\r' 13 ;
 : '\t' 9 ;
 
-: is_whitespace
+: SPACE=
 	DUP BL =
 	SWAP DUP '\r' =
 	SWAP DUP '\n' =
@@ -41,12 +50,12 @@
 	OR OR OR
 ;
 
-: scrub_space ( addr len -- a2 l2 a1 l1 )
-	BEGIN COUNT is_whitespace NOT UNTIL \ skip starting whitespace
+: SPLIT_SPACE ( addr len -- a2 l2 a1 l1 )
+	BEGIN COUNT SPACE= NOT UNTIL \ skip starting whitespace
 	SWAP 1- SWAP 1+ \ roll back a character
 
 	OVER -ROT
-	BEGIN COUNT is_whitespace UNTIL \ find next whitespace
+	BEGIN COUNT SPACE= UNTIL \ find next whitespace
 	( old_a rem_a rem_len )
 	
 	\ a1 = old_a
@@ -56,7 +65,7 @@
 	TUCK SWAP - 1- >R \ puts l1 on return stack
 	SWAP
 
-	BEGIN COUNT is_whitespace NOT UNTIL \ skip ending whitespace
+	BEGIN COUNT SPACE= NOT UNTIL \ skip ending whitespace
 	SWAP 1- SWAP 1+ \ roll back a character
 
 	R> R> SWAP
@@ -79,6 +88,23 @@
 	2DROP DROP 1 \ strings were equal
 ;
 
+: ZS= ( ca a u -- eq? ) \ ca is a cstr
+	BEGIN DUP WHILE
+		-ROT
+		OVER C@ ( u ca a cc )
+		?DUP UNLESS \ is null
+			DROP 2DROP 0 EXIT
+		THEN
+		OVER C@ = UNLESS
+			DROP 2DROP 0 EXIT
+		THEN
+		( u ca a )
+		1+ SWAP 1+ SWAP ROT 1-
+	REPEAT
+	( ca a u )
+	2DROP @ 0=
+;
+
 : (FORGET) \ forget based on pointer, not name
 	DUP @ LATEST !
 	HERE !
@@ -91,62 +117,6 @@
 ;
 
 : ], ] [COMPILE] LITERAL ;
-
-(
-\ simple non-secure random number generator
-\ because it's so simple, it's also shit
-: RANDOMC RDTSC DROP DUP 4 >> SWAP 12 >> XOR 255 AND ;
-
-\ less simple and less shit rng based on an lfsr and the timestamp counter
-VARIABLE LFSR
-\RANDOMC RANDOMC 8 << OR 1 OR LFSR ! \ 1 or makes sure it doesn't get filled with all zeros
-: ADVANCE_LFSR
-	LFSR @
-	DUP 7 >> XOR 65535 AND
-	DUP 9 << XOR 65535 AND
-	DUP 13 >> XOR 65535 AND
-	LFSR !
-;
-: RAND2
-	LFSR @ 255 AND
-	\ advance the lfsr between 1 and 4 times, using a different source of randomness
-	RANDOMC 3 AND 1+ BEGIN ?DUP WHILE 1- ADVANCE_LFSR REPEAT
-;
-
-: RANDOM \ TODO make this less deep on the stack
-	RAND2 RAND2 RAND2 RAND2
-	8 << OR 8 << OR 8 << OR  
-;
-)
-
-\ better rng that just uses /dev/urandom
-
-S" /dev/urandom" R/O OPEN-FILE DROP
-CONSTANT URANDOM-FD
-
-DECIMAL
-
-512 ALLOT CONSTANT RANDOM-BUF
-
-VARIABLE RANDOM-BUF-IDX
-
-: READ-RANDOM
-	RANDOM-BUF 512 URANDOM-FD READ-FILE 2DROP
-;
-READ-RANDOM
-
-: RANDOM
-	RANDOM-BUF-IDX DUP @ DUP ( *rbi rbi rbi )
-	RANDOM-BUF + @ ( *rbi rbi v )
-	.S CR
-	-ROT 4+ DUP 512 >= IF
-		." refill random buffer"
-		READ-RANDOM
-		DROP 0 SWAP !
-	ELSE
-		SWAP !
-	THEN
-;
 
 (
 	IMMEDIATE IF ----------------------------------------------------------------------
@@ -191,6 +161,15 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	[COMPILE] IF
 ;
 
+: S' WORD FIND >CFA ;
+: ' IMMEDIATE
+	STATE @ IF
+		' ' ,
+	ELSE
+		S'
+	THEN
+;
+
 (
 	IMMEDIATE IFTHEN
 
@@ -201,14 +180,14 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	STATE @ IF
 		' IFTHEN ,
 	ELSE
-		LOOKUPXT SWAP IFELSE EXECUTE DROP
+		S' SWAP IFELSE EXECUTE DROP
 	THEN
 ;
 : ULTHEN IMMEDIATE
 	STATE @ IF
 		' ULTHEN ,
 	ELSE
-		LOOKUPXT SWAP IFELSE DROP EXECUTE
+		S' SWAP IFELSE DROP EXECUTE
 	THEN
 ;
 
@@ -216,7 +195,7 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	STATE @ IF
 		' IFELSE ,
 	ELSE
-		LOOKUPXT LOOKUPXT ROT ULTHEN SWAP DROP EXECUTE
+		S' S' ROT ULTHEN SWAP DROP EXECUTE
 	THEN
 ;
 
@@ -269,25 +248,6 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 	[COMPILE] LITERAL
 ;
 
-( dice words for a thing i did once )
-
-: DICE0 ( A B -- BdA ) \ zero indexed dice
-	0 SWAP ( A acc B )
-	DFOR
-		>R OVER ( A acc A )
-		RANDOM SWAP UMOD ( A acc roll )
-		+ R>
-	REPEAT
-	NIP
-;
-
-: DICE1 ( A B -- BdA ) \ 1 indexed dice
-	TUCK DICE0 +
-;
-
-: 1DICE0 1 DICE0 ;
-: 1DICE1 1 DICE1 ;
-
 (
 	BETTER DECOMPILATION ----------------------------------------------------------------------
 
@@ -298,7 +258,7 @@ DROP \ because the above definition uses the new version of if, it leaves the fl
 
 37 ALLOT CONSTANT SFIGS
 ALIGN
-: GEN-SFIGS
+: GEN_SFIGS
 	35 DFOR
 		DUP 2 +
 		DUP BASE !
@@ -306,11 +266,11 @@ ALIGN
 		SWAP SFIGS + C!
 	REPEAT
 ;
-GEN-SFIGS
+GEN_SFIGS
 DEC
-FORGET GEN-SFIGS
+FORGET GEN_SFIGS
 
-: DC-CELL ( v )
+: DC_CELL ( v )
 	BASE @ SWAP
 
 	DUP HEX 8 U.R
@@ -348,15 +308,15 @@ FORGET GEN-SFIGS
 	CR
 ;
 
-: DC-CELLS ( addr len ) \ len is number of cells, not number of bytes
+: DC_CELLS ( addr len ) \ len is number of cells, not number of bytes
 	BEGIN ?DUP WHILE
-		COUNT4 DC-CELL
+		COUNT4 DC_CELL
 	REPEAT
 ;
 
-: DC-REP ( addr )
+: DC_REP ( addr )
 	BEGIN
-		DUP @ DC-CELL
+		DUP @ DC_CELL
 		4+
 		KEY '\n' <>
 	UNTIL
@@ -364,278 +324,337 @@ FORGET GEN-SFIGS
 ;
 
 (
-	MODULES ----------------------------------------------------------------------
+	THE ENVIRONMENT, CONTINUED ----------------------------------------------------------------------
 
-	This is a very silly and pretty unnecessary feature. Basically I thought "what if I wanna give the same simple name to multiple words" and then that led to "i can make the dictionary skip a section by frobbing the link pointers" and now we're here.
+	Jones provides us with the ability to fetch arguments, but not environment variables. 
 )
 
-VARIABLE LATESTMOD
+: ZTELL DUP STRLEN TELL ;
 
-: FINDMOD ( a l -- *mod|0 )
-	LATESTMOD
-	BEGIN ?DUP WHILE
-		DUP DUP >R 16 + C@ 63 AND SWAP 17 + SWAP ( sa sl na nl )
-		2SWAP 2DUP >R >R
-		S= IF
-			RDROP RDROP R> EXIT
+: ENV= ( ca a u -- 1|0 )
+	\.S CR
+	BEGIN DUP WHILE
+		-ROT
+		OVER C@ ( u ca a cc )
+		?DUP UNLESS \ is null
+			DROP 2DROP 0 EXIT
 		THEN
-		R> R> R> @
+		OVER C@ = UNLESS
+			DROP 2DROP 0 EXIT
+		THEN
+		( u ca a )
+		1+ SWAP 1+ SWAP ROT 1-
 	REPEAT
-	2DROP 0
+	\." names ="
+	( ca a u )
+	2DROP C@ [CHAR] = =
+;
+
+: ENVVAR ( a u -- a u (if var exists) | 0 0 (if it doesn't) )
+	ENVIRON
+	BEGIN DUP @ ?DUP WHILE
+		\." checking env string " DUP DUP STRLEN TELL CR
+		( a u env ca )
+		SWAP >R >R
+		2DUP R>
+		( a u a u ca )
+		DUP >R
+		-ROT ENV=
+		IF
+			\." found var" CR
+			( a u )
+			NIP R> RDROP
+			+ 1+ DUP STRLEN EXIT
+		ELSE
+			RDROP
+		THEN
+		R> 4+
+	REPEAT
+	DROP 2DROP 0 0
+;
+
+: CHDIR ( a u -- 0 (if success) | errno (if not) )
+	CSTRING SYS_CHDIR SYSCALL1
+	DUP 0< IF NEGATE THEN
 ;
 
 (
-	module descriptor "struct"
-
-	0	backpointer to previous module OR null
-	4	word to be selected when enabled
-	8	word to be selected when disabled
-	12	word to have its backpointer changed ("guard word")
-	16	namelen + flags (1 byte)
-	17	name
-
-
-	namelen + flags
-	bits [5,0] = length
-	bit 6 = module enabled (1 when in, 0 when out)
+	Here's a little secret that the man pages won't tell you: getcwd doesn't return a pointer to a cstring, it returns a length (including the null terminator). Presumably, the difference is so that glibc's wrapper function can return the address of a dynamically allocated buffer if necessary.
 )
 
+: GETCWD ( -- a u (if success) | 0 errno (if not) )
+	4096 HERE @ SYS_GETCWD SYSCALL2
+	DUP 0< IF
+		NEGATE 0 SWAP
+	ELSE
+		HERE @ SWAP 1-
+	THEN
+;
 
 (
-	EVALUATE ----------------------------------------------------------------------
+	FILES, CONTINUED ----------------------------------------------------------------------
 
-	EVALUATE is a word that, given a string, evaluates it. Sounds pretty simple, right? Just iterate over the string and pass each word in turn to (INTERPRET). Well.
+	Jonesforth didn't originally define WRITE-FILE, but I thought that it should be in jonesforth.f along with the other basic file operations. So that's where it is. In this section, then, we'll get into some more advanced stuff.
+
+	First off is stat. Linux provides three major options for stat, two which take a pathname and one which takes a file descriptor. Here, I provide words for all of them. I also provide a convenience function for getting the size of the file you just statted.
+)
+
+: STAT ( a u -- 0 | errno )
+	CSTRING	HERE @
+	SWAP SYS_STAT SYSCALL2
+	NEGATE
+;
+
+(
+	LSTAT differs from STAT in that it doesn't follow symlinks.
+)
+: LSTAT ( a u -- 0 | errno )
+	CSTRING	HERE @
+	SWAP SYS_LSTAT SYSCALL2
+	NEGATE
+;
+
+: FSTAT ( fd -- 0 | errno )
+	HERE @
+	SWAP SYS_FSTAT SYSCALL2
+	NEGATE
+;
+
+: STAT_SIZE ( *stat -- u )
+	[ 5 CELLS ], + @
+;
+
+(
+	Here's where things get really interesting. mmap is a Linux system call that maps a file into the address space of a process.
+)
+
+: PAGEALIGNED
+	4095 + [ 4095 INVERT ], AND
+;
+
+: (MMAP) ( ofs fd flags prot length addr -- +addr | -errno )
+	\.S CR
+	SYS_MMAP SYSCALL6
+;
+
+: MMAP ( fd len flags prot -- addr 0 | x errno )
+	>R >R 0 -ROT R> R>
+	( 0 fd len flags prot )
+	ROT 0 (MMAP)
+	DUP 4095 AND
+	IF \ error
+		NEGATE 0 SWAP
+	ELSE
+		0
+	THEN
+;
+
+: MMAP_FPR ( fd -- addr u 0 | x x errno ) \ maps the Full file Privately with Read enabled
+	DUP FSTAT ?DUP IF
+		0 SWAP EXIT
+	THEN
+	HERE @ STAT_SIZE
+	TUCK
+	MAP_PRIVATE
+	PROT_READ
+	MMAP
+	ROT SWAP
+;
+
+: MUNMAP ( addr len -- 0 | errno )
+	SWAP SYS_MUNMAP SYSCALL2 NEGATE
+;
+
+(
+	EVALUATE AND LOADING FILES ----------------------------------------------------------------------
+
+	Many Forths have a word called EVALUATE, which, when given a string, evaluates it as Forth code. This is obviously pretty useful for (say) loading code files from disk. It sounds pretty simple, right? Just iterate over the string and pass each word in turn to (INTERPRET). Well.
 
 	There are many words that call WORD or KEY, such as :, .", S", etc etc. These words will behave oddly when EVALUATEd in this naive fashion, because KEY will still return characters from standard input. The way I chose to solve this is to temporarily override KEY (see jonesforth.S). The short explanation is that you write a callback to KEYCB, which is then called instead of KEY. This callback then needs to remove itself when it's finished, by writing 0 to KEYCB.
 
-	EVAL_RECORD
-		0	addr
-		4	len
-		8	read_idx
-		12	refill
+	Here, we replace KEY with BUFKEY. BUFKEY is told where to read from by a stack of KEY_SOURCE structs, creatively named KEY_SOURCES. A KEY_SOURCE is laid out like this:
 
-	refill is either an xt (hence bits 0 and 1 are clear), OR a file descriptor shifted left 2 and ORed with 1. If it's a function, the function is executed. If it's an fd the buffer is refilled by reading from it.
+	0	address
+	4	length
+	8	read index
+	12	next
 
-	Jonesforth's base KEY can actually be implemented in this fashion. 
+	The first three fields should be self-explanatory. The fourth, next, is a field that describes what to do next after the buffer runs out. 0 means switch to the next source down, 1 means munmap the buffer and then switch. Yes, that's right: this implementation uses mmap to avoid having to allocate buffers for files.
 
-	To allow for nested EVALUATEs, there's a stack of strings and callbacks called EVAL_RECORDS. The callbacks (if present) are executed when the string they are paired with is empty.
+	This implementation of EVALUATE isn't a true evaluate, because it only works from the prompt. This is because of how QUIT and the interpreter work. I could fix it, but I'd have to gut most of Jonesforth and I really don't feel like doing that.
 )
 
-16 DUP CONSTANT MAX_EVAL_RECORDS
-4 * CELLS ALLOT CONSTANT EVAL_RECORDS \ 16 levels of nesting
-VARIABLE EVAL_RECORDS_IDX \ record index, not byte index. mul by 4 cells before adding to EVAL_RECORDS
+8 CONSTANT MAX_KEY_SOURCES
+4 CELLS MAX_KEY_SOURCES * ALLOT CONSTANT KEY_SOURCES
+VARIABLE KEY_SOURCE_IDX -1 KEY_SOURCE_IDX ! \ always equal to # of sources - 1
 
--1 EVAL_RECORDS_IDX ! \ init to -1, because zero means 1 record
-
-: KEY-FROM-BUF ( buf** -- c )
-	DUP @ OVER 4+ @ ( buf** addr len )
-	COUNTC >R
-	ROT SWAP OVER ( addr buf** len buf** )
-	4+ ! !
-	R>
+: KEY_SOURCE
+	KEY_SOURCE_IDX @ 16 * KEY_SOURCES +
 ;
 
-: KEY-FROM-RECS
-	\ get the current record
-	EVAL_RECORDS EVAL_RECORDS_IDX @ [ 4 CELLS ], * + DUP
-	KEY-FROM-BUF ( buf** c )
-	SWAP 4+ @ ( c len )
-	UNLESS \ if length == 0, decrement idx by 1 and maybe go back to regular KEY
-		EVAL_RECORDS_IDX @ UNLESS
-			0 KEYCB !
-		THEN
-		1 EVAL_RECORDS_IDX -!
+: NEXT_SOURCE ( -- 1 (if source is present) | 0 (if control returned to builtin) )
+	\KEY_SOURCE 16 DUMP
+	KEY_SOURCE 12 + @ IF \ next != 0, munmap buffer
+		\." munmapping" CR
+		DUP DUP
+		@ SWAP 4+ @ MUNMAP DROP
 	THEN
-;
-
-: ADD-EVAL-REC ( addr len -- 0 | 1 ) \ 1 on failure
-	EVAL_RECORDS_IDX @ [ MAX_EVAL_RECORDS 1- ], >= IF
-		2DROP 1
-	ELSE
-		EVAL_RECORDS_IDX 1 SWAP +!
-		\." adding rec"
-		EVAL_RECORDS EVAL_RECORDS_IDX @ [ 4 CELLS ], * +
-		\.S CR
-		SWAP OVER 4+ ! !
-		0
-	THEN
-;
-
-: EVALUATE ( addr len )
-	ADD-EVAL-REC
-	IF
-		\ just fucking panic back to the prompt
-		." maximum EVALUATE nesting depth reached"
+	KEY_SOURCE_IDX DUP @ 1- DUP ROT !
+	0< DUP IF
+		\." no sources left" CR
 		0 KEYCB !
-		-1 EVAL_RECORDS_IDX !
+	THEN
+	NOT
+;
+
+: BUFKEY
+	KEY_SOURCE DUP 4+ DUP @
+	SWAP 4+ @
+	= IF
+		\." source empty" CR
+		NEXT_SOURCE
+		UNLESS	\ no sources left
+			\." bufkey: no sources left" CR
+			DROP (KEY) EXIT
+		THEN
+		\." continuing on next source" CR
+		16 -
+	THEN
+
+	DUP @ OVER 8 + @ ( *source addr idx )
+	TUCK + C@ ( *source idx key )
+	SWAP 1+ ROT
+	8 + !
+;
+
+: (EVALUATE) ( addr u next -- )
+	KEY_SOURCE_IDX DUP @ DUP ( *sidx sidx sidx )
+	MAX_KEY_SOURCES = IF
+		0 KEYCB !
+		." max evaluate depth reached!"
 		QUIT
 	THEN
-	' KEY-FROM-RECS KEYCB !
+	\." evaluate " .S CR
+	1+ SWAP !
+
+	KEY_SOURCE ( addr u next *source )
+	0 OVER 8 + ! 	\ read idx
+	TUCK 12 + !		\ next
+	TUCK 4 + !		\ length
+	!
+	' BUFKEY KEYCB !
 ;
 
+: EVALUATE 0 (EVALUATE) ;
+
+: (LOAD) ( addr u -- )
+	." loading " 2DUP TELL CR
+	R/O OPEN-FILE ?DUP IF
+		S" (LOAD): failed to open for reading" PERROR
+		DROP EXIT
+	THEN
+	DUP
+	MMAP_FPR ?DUP IF
+		S" (LOAD): failed to mmap" PERROR
+		2DROP EXIT
+	THEN
+	ROT CLOSE-FILE DROP
+	1 (EVALUATE) QUIT
+;
+
+: LOAD WORD (LOAD) ;
 
 (
-	FLOATING POINT, CONTINUED ----------------------------------------------------------------------
+	LOADLIB is used for loading files relative to a constant library path, as opposed to in the CWD. The path is found in the environment variable FORTH_LIBRARY.
+)
+: (LOADLIB) ( a u )
+	>R >R
+
+	S" FORTH_LIBRARY" ENVVAR
+	OVER UNLESS
+		2DROP ." could not find library path" CR QUIT
+	THEN
+
+	( a u )
+	TUCK HERE @ SWAP CMEMCPY
+	HERE @ SWAP
+	2DUP + TUCK [CHAR] / SWAP ! 1+ SWAP 1+
+
+	R> R>
+	DUP >R
+	( ... dest scr len )
+	ROT SWAP CMEMCPY
+	R> +
+	(LOAD)
+;
+
+
+: LOADLIB
+	WORD (LOADLIB)
+;
+
+(
+	Jonesforth's builtin parse error reads from its own buffer, which means we need to replace it with our own. This function prints at most 40 characters leading up to the read index of the current KEY_SOURCE.
 )
 
-: XF**I ( D: b -- , F: a -- a**b )
-	XF1 DFOR
-		XOVER XF*
-	REPEAT
-	XSWAP XDROP
-;
-
-: XFLT ( D: int frac p -- , X: -- f )
-	ROT I>X \ int part on x87 stack
-	( frac prec )
-	SWAP I>X
-	BASE @ I>X XF**I XF/ XF+
-;
-: FLT XFLT X> ;
-
-: XF.A ( D: abs_precision -- , X: x -- )
-	XDUP X>
-	[ HEX 80000000 DEC ], AND IF [CHAR] - EMIT THEN
-	DUP XFABS
-	XFSPLIT 0 .R
-	[CHAR] . EMIT
-	BASE @ I>X XF**I
-	XF* X>I SWAP U.RZ
-;
-: F.A SWAP >X XF.A ;
-
-: MKXDBC
-	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , ' >X , FIND >CFA , ' X> , ' EXIT ,
-;
-: MKXDBN
-	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , ' >X , ' XSWAP , FIND >CFA , ' X> , ' EXIT ,
-;
-: MKXDU
-	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , FIND >CFA , ' X> , ' EXIT ,
-;
-
-MKXDBC XF+
-MKXDBC XF*
-MKXDBN XF-
-MKXDBN XF/
-
-MKXDU XF1/
-MKXDU XFSPLIT
-MKXDU XFNEGATE
-MKXDU XFABS
-
-MKXDU XFLOG2
-MKXDBN XFLOGN
-
-: FSIGNUM [ HEX 80000000 DEC ], AND 31 >> NOT ;
-
-: F**I ( a b -- a**b )
-	SWAP >X XF**I X>
-;
-
-: F0 XF0 X> ;
-: F1 XF1 X> ;
-
-: F>I >X X>I ;
-: F>T >X X>IT ;
-: I>F I>X X> ;
-
-: XF.P ( D: rel_recision -- , X: x -- )
-	XDUP XFABS BASE @ I>X XFLOGN ( X: x log_b(x) )
-	X>IT NEGATE + 1 MAX XF.A
-;
-: F.P SWAP >X XF.P ;
-
-HEX 4b800000 DEC CONSTANT 2**24
-: F. 2**24 BASE @ I>F FLOGN F>T F.P SPACE ;
-
-: INTEGER NUMBER ;
-
-: NUMBER ( a l -- n x ) \ x is number of unparsed characters
-	OVER C@ [CHAR] - = IF \ do negativeness manually
-		COUNTC DROP
-		1
-	ELSE
-		0
+: BUFPARSEERR
+	KEY_SOURCE
+	DUP @ SWAP 8 + @
+	( addr idx )
+	DUP 40 > IF
+		40 - + 40
 	THEN
-	-ROT
-
-	2DUP NUMBER ( neg a l n x )
-	?DUP UNLESS
-		( neg a l n )
-		\ number parsed fully
-		-ROT 2DROP SWAP IFTHEN NEGATE 0 EXIT
-	THEN
-
-	SWAP BASE @ / >R \ correct and stash value
-	( neg a l1 l2 )
-	TUCK - ( neg a l2 y )
-
-	ROT + DUP C@ [CHAR] . = UNLESS
-		ROT DROP
-		DROP R> SWAP EXIT
-	THEN
-
-	SWAP COUNTC DROP ( neg a l )
-
-	?DUP UNLESS \ length of frac part is 0
-		DROP R> SWAP IFTHEN NEGATE I>F 0 EXIT
-	THEN
-
-	DUP -ROT NUMBER ( neg l n2 x )
-
-	?DUP UNLESS \ fully parsed
-		( neg l n2 )
-		SWAP R> -ROT FLT SWAP IFTHEN FNEGATE 0 EXIT
-	THEN
-
-	( neg l n2 x )
-	ROT DROP ROT DROP RDROP
-;
-LATEST @ >CFA NUMBERCB !
-
-: XFSF> ( D: i -- , X: f -- f )
-	BASE @ I>X XF**I XF*
-;
-: FSF> ( f i -- f )
-	SWAP >X XFSF> X>
+	TELL
 ;
 
-: # WORD NUMBER DROP ;
-: H# BASE @ HEX # SWAP BASE ! ;
+LATEST @ >CFA PARSEERRCB !
 
-: XLITERAL IMMEDIATE ' XLIT , ,	;
-: ]X, ] [COMPILE] XLITERAL ;
+(
+	DEPENDENCY CHECKS ----------------------------------------------------------------------
 
-: XF<
-	XFCMP FSTSW
-	[ BIN 0100010100000000 DEC ],
-	AND 0=
+	Code often depends on other code. For example, you might be writing an application that requires double precision integers, or a random number generator, or floating point support. If you try to LOAD a file without first LOADing what it depends on, you'll get a stream of parse errors and maybe break something.
+
+	LOADED does two things: first, it prints "OK". More importantly, it creates a marker word with the same name as the file. REQUIRE can check for this word at the top of another file, and if it doesn't find it, quit back to the regular reading-from-stdin prompt.
+
+	INCLUDE and INCLUDELIB also check for these marker words, but instead of simply erroring, search for and load the named file in the CWD and library respectively. It's not a perfect solution (no namespacing, requires you to specify the file name twice) but it's good enough.
+
+	Basic Principle!
+)
+
+: LOADED
+	WORD
+	\2DUP ." loaded " TELL CR
+	\UNUSED DUP . ." cells (" CELLS . ." bytes) remaining" CR
+	." OK" CR
+	CREATE DOCOL , ' EXIT ,
 ;
-: XF> XF< NOT ;
 
-: F< >X >X XF< NOT ; \ order on stack swaps
-: F> >X >X XF< ;
+: REQUIRE
+	WORD 2DUP FIND
+	UNLESS
+		TELL SPACE ." required, not found" CR
+		-1 KEY_SOURCE_IDX !
+		0 KEYCB ! QUIT
+	THEN
+	2DROP
+;
 
-S" /dev/stdin" R/O OPEN-FILE DROP
+: INCLUDE
+	WORD 2DUP FIND
+	UNLESS (LOAD) ELSE 2DROP THEN
+;
+: INCLUDELIB
+	WORD 2DUP FIND
+	UNLESS (LOADLIB) ELSE 2DROP THEN
+;
 
-
-HEX
-HERE @ SWAP
-, 1 , \ fd 0, watch for POLLIN
-CONSTANT STDIN_POLLFD
-
-DUP CONSTANT DATA_SEG_START
+: LOAD_ARG
+	ARGC 1 > IF
+		1 ARGV (LOAD)
+	THEN
+;
 
 DEC
-HERE @ SWAP - DUP
-." forth code used " . ." bytes (" 4 / . ." cells)" CR
+LOADED aforth.f
 
-GET-BRK HERE @ -
-DUP . ." bytes (" 4 / . ." cells) remaining" CR
-." OK" CR
-
-
+LOAD_ARG

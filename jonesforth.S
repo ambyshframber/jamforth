@@ -890,6 +890,24 @@ code_\label :			// assembler code follows
 	pushl %eax
 	NEXT
 
+	defcode "U<",2,,ULT
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	setb %al
+	movzbl %al,%eax
+	pushl %eax
+	NEXT
+
+	defcode "U>",2,,UGT
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	seta %al
+	movzbl %al,%eax
+	pushl %eax
+	NEXT
+
 	defcode "<=",2,,LE
 	pop %eax
 	pop %ebx
@@ -904,6 +922,24 @@ code_\label :			// assembler code follows
 	pop %ebx
 	cmp %eax,%ebx
 	setge %al
+	movzbl %al,%eax
+	pushl %eax
+	NEXT
+
+	defcode "U<=",3,,ULE
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	setbe %al
+	movzbl %al,%eax
+	pushl %eax
+	NEXT
+
+	defcode "U>=",3,,UGE
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	setae %al
 	movzbl %al,%eax
 	pushl %eax
 	NEXT
@@ -1039,6 +1075,9 @@ code_\label :			// assembler code follows
 	defcode "XF0",3,,FLDZ_	// load constant 0
 	fldz
 	NEXT
+	defcode "XFPI",4,,FLDPI_
+	fldpi
+	NEXT
 
 	defcode "X>",2,,FSTP_
 	sub $4,%esp
@@ -1053,6 +1092,23 @@ code_\label :			// assembler code follows
 	fisttpl (%esp)
 	NEXT
 
+	defcode "XDUP>",5,,FST_ // used for XF.S
+	sub $4,%esp
+	fst (%esp)
+	NEXT
+	defcode "XINCSTP",7,,XINCSTP // also used for XF.S
+	fincstp
+	NEXT
+
+	defcode "X!",2,,XSTORE
+	pop %eax
+	fstp (%eax)
+	NEXT
+	defcode "X@",2,,XFETCH
+	pop %eax
+	fld (%eax)
+	NEXT
+
 	// standard stack manipulation stuff
 	defcode "XSWAP",5,,XSWAP
 	fxch
@@ -1064,7 +1120,15 @@ code_\label :			// assembler code follows
 	defcode "XDUP",4,,XDUP
 	fld %st(0)
 	NEXT
+	defcode "X2DUP",5,,X2DUP
+	fld %st(1)
+	fld %st(1)
+	NEXT
 	defcode "XOVER",5,,XOVER
+	fld %st(1)
+	NEXT
+	defcode "XTUCK",5,,XTUCK
+	fxch
 	fld %st(1)
 	NEXT
 	defcode "XROT",4,,XROT
@@ -1092,19 +1156,24 @@ code_\label :			// assembler code follows
 	push %eax
 	NEXT
 
-	.data
-fcw_scratch:
-	.int 0
-
 	defcode "FSTCW",5,,FSTCW_
-	fstcw fcw_scratch
-	mov fcw_scratch,%eax // why do i have to do this. why has god abandoned me
-	push %eax
-	NEXT	
+	sub $4,%esp
+	movl $0,(%esp)
+	fstcw (%esp)
+	NEXT
 	defcode "FLDCW",5,,FLDCW_
-	pop %eax
-	mov %eax,fcw_scratch
-	fldcw fcw_scratch
+	fldcw (%esp)
+	add $4,%esp
+	NEXT
+
+	defcode "XEMPTY?",7,,XEMPTY
+	fxam
+	xor %ebx,%ebx
+	fstsw %ax
+	and $0b0100010100000000,%eax
+	cmp $0b0100000100000000,%eax
+	sete %bl
+	push %ebx
 	NEXT
 
 	defcode "XF+",3,,XFADD
@@ -1118,6 +1187,10 @@ fcw_scratch:
 	NEXT
 	defcode "XF/",3,,XFDIV
 	fdivrp
+	NEXT
+
+	defcode "XFSQUARE",8,,XFSQUARE
+	fmul %st(0),%st(0)
 	NEXT
 
 	defcode "XFCMP",5,,XFCMP
@@ -1184,6 +1257,7 @@ fcw_scratch:
 	NEXT
 
 	defcode "XF1/",4,,XFRECIP
+	ffree %st(7)
 	fld1
 	fdivp
 	NEXT
@@ -1195,11 +1269,45 @@ fcw_scratch:
 	fisubl (%esp)
 	NEXT
 
+	defcode "XFI+",4,,XFIADD
+	fiaddl (%esp)
+	add $4,%esp
+	NEXT
 	defcode "XFI-",4,,XFISUB
 	fisubl (%esp)
 	add $4,%esp
 	NEXT
+	defcode "XFI*",4,,XFIMUL
+	fimull (%esp)
+	add $4,%esp
+	NEXT
+	defcode "XFI/",4,,XFIDIV
+	fidivl (%esp)
+	add $4,%esp
+	NEXT
+
+	defcode "XFSCALE",7,,XFSCALE
+	fxch
+	fscale
+	fxch
+	ffree %st(0)
+	fincstp
+	NEXT
+	defcode "XF2*",4,,XFDOUBLE
+	fld1
+	fxch
+	fscale
+	fxch
+	ffree %st(0)
+	fincstp
+	NEXT
 	
+	defcode "XFSIN",5,,XFSIN
+	fsin
+	NEXT
+	defcode "XFCOS",5,,XFCOS
+	fcos
+	NEXT
 
 /*
 	RETURNING FROM FORTH WORDS ----------------------------------------------------------------------
@@ -1446,6 +1554,7 @@ var_\name :
 	defvar "BASE",4,,BASE,10
 
 	defvar "KEYCB",5,,KEYCB,0
+	defvar "PARSEERRCB",10,,PARSEERRCB,0
 	defvar "NUMBERCB",8,,NUMBERCB,NUMBER
 
 /*
@@ -1491,14 +1600,22 @@ var_\name :
 
 	defconst "SYS_EXIT",8,,SYS_EXIT,__NR_exit
 	defconst "SYS_OPEN",8,,SYS_OPEN,__NR_open
+	defconst "SYS_OPENAT",10,,SYS_OPENAT,__NR_openat
 	defconst "SYS_CLOSE",9,,SYS_CLOSE,__NR_close
 	defconst "SYS_READ",8,,SYS_READ,__NR_read
 	defconst "SYS_WRITE",9,,SYS_WRITE,__NR_write
 	defconst "SYS_CREAT",9,,SYS_CREAT,__NR_creat
 	defconst "SYS_BRK",7,,SYS_BRK,__NR_brk
+	defconst "SYS_STAT",8,,SYS_STAT,__NR_stat
+	defconst "SYS_LSTAT",9,,SYS_LSTAT,__NR_lstat
 	defconst "SYS_FSTAT",9,,SYS_FSTAT,__NR_fstat
 	defconst "SYS_POLL",8,,SYS_POLL,__NR_poll
 	defconst "SYS_GETTIMEOFDAY",16,,SYS_GETTIMEOFDAY,__NR_gettimeofday
+	defconst "SYS_GETTIME64",13,,SYS_GETTIME64,__NR_clock_gettime64
+	defconst "SYS_CHDIR",9,,SYS_CHDIR,__NR_chdir
+	defconst "SYS_GETCWD",10,,SYS_GETCWD,__NR_getcwd
+	defconst "SYS_MMAP",8,,SYS_MMAP,__NR_mmap2
+	defconst "SYS_MUNMAP",10,,SYS_MUNMAP,__NR_munmap
 
 	defconst "O_RDONLY",8,,__O_RDONLY,0
 	defconst "O_WRONLY",8,,__O_WRONLY,1
@@ -1508,6 +1625,16 @@ var_\name :
 	defconst "O_TRUNC",7,,__O_TRUNC,01000
 	defconst "O_APPEND",8,,__O_APPEND,02000
 	defconst "O_NONBLOCK",10,,__O_NONBLOCK,04000
+
+	defconst "PROT_READ",9,,__PROT_READ,1
+	defconst "PROT_WRITE",10,,__PROT_WRITE,2
+
+	defconst "MAP_SHARED",10,,__MAP_SHARED,1
+	defconst "MAP_PRIVATE",11,,__MAP_PRIVATE,2
+
+	defconst "MAP_ANON",8,,__MAP_ANON,32
+
+	defconst "CLOCK_REALTIME",14,,__CLOCK_REALTIME,0
 
 	defconst "0",1,,ZERO,0
 	defconst "1",1,,ONE,1
@@ -1620,6 +1747,11 @@ _KEY:
 	call CALLA2F
 	pop %eax
 	ret
+
+	defcode "(KEY)",5,,KEY_STDIN
+	call regular_key
+	push %eax
+	NEXT
 
 regular_key:
 	mov (currkey),%ebx
@@ -1756,6 +1888,7 @@ _WORD:
 word_buffer:
 	.space 32
 
+	defconst "WORD_BUFFER",11,,WORD_BUFFER_,word_buffer
 /*
 	As well as reading in words we'll need to read in numbers and for that we are using a function
 	called NUMBER.  This parses a numeric string such as one returned by WORD and pushes the
@@ -2603,6 +2736,16 @@ _INTERPRET: // %ecx = length, %edi = pointer to word
 	mov $__NR_write,%eax	// write syscall
 	int $0x80
 
+	mov var_KEYCB,%eax
+	cmp $0,%eax
+	jz parseerr_default
+	mov var_PARSEERRCB,%eax
+	call CALLA2F
+	POPRSP %eax
+	push %eax
+	ret	
+
+parseerr_default:
 	mov (currkey),%ecx	// the error occurred just before currkey position
 	mov %ecx,%edx
 	sub $buffer,%edx	// %edx = currkey - buffer (length in buffer before currkey)
@@ -2686,6 +2829,27 @@ interpret_is_lit:
 	pop %eax		// Get xt into %eax
 	jmp *(%eax)		// and jump to it.
 				// After xt runs its NEXT will continue executing the current word.
+
+
+	defcode "SYSCALL6",8,,SYSCALL6 // needed for mmap
+	pop %eax		// System call number (see <asm/unistd.h>)
+	pop %ebx		// First parameter.
+	pop %ecx		// Second parameter
+	pop %edx		// Third parameter
+
+	PUSHRSP %esi		// Save %esi on return stack
+	pop %esi		// Fourth param
+	pop %edi		// Fifth param
+	push %ebp		// Save %ebp on regular stack
+	movl 4(%esp),%ebp	// Sixth param
+
+	int $0x80
+
+	pop %ebp		// Restore %ebp
+	add $4,%esp		// Remove param 6 from stack
+	POPRSP %esi		// Restore %esi
+	push %eax		// Result (negative for -errno)
+	NEXT
 
 	defcode "SYSCALL3",8,,SYSCALL3
 	pop %eax		// System call number (see <asm/unistd.h>)

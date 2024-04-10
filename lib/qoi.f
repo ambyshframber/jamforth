@@ -1,0 +1,49 @@
+: QOI_ENC_ENABLE_ALPHA ( *write -- *write )
+    DUP 2 - 4 SWAP !
+;
+
+66 CELLS ALLOT CONSTANT QOI_ENCODER
+
+0 CONSTANT Q0
+
+: QOI_ENC_RESET
+    0 QOI_ENCODER 66 MEMSET
+;
+
+: QOI_ENC_INIT ( w h -- )
+    0 QOI_ENCODER 66 MEMSET
+    Q0 DUP HERE !
+    ROT SWAP QOI_ENCODER (QOI_ENC_INIT)
+    14 HERE +!
+;
+
+: QOI_ENCODE ( px -- )
+    HERE @ QOI_ENCODER
+    (QOI_ENCODE)
+    HERE +!
+;
+
+: QOI_ENC_FINISH ( -- )
+    HERE @ QOI_ENCODER (QOI_ENC_FINISH)
+    HERE +!
+;
+
+: EXPORT
+    420
+    O_CREAT O_TRUNC OR R/W OR
+    Z" output.qoi"
+    SYS_OPEN SYSCALL3
+    .S CR
+    DUP
+    Q0 HERE @ OVER - ROT
+    .S CR
+    WRITE-FILE
+    CLOSE-FILE
+;
+
+: SET_Q0 ( p -- )
+    ' Q0 8 + !
+;
+
+LOADED qoi.f
+HERE @ SET_Q0
