@@ -1,40 +1,29 @@
 DECIMAL
 
-S" /dev/urandom" R/O OPEN-FILE DROP
-CONSTANT URANDOM_FD
+4 CELLS ALLOT CONSTANT XORSHIFT128
 
-512 ALLOT CONSTANT RANDOM_BUF
+\ i know i should really use getrandom here but I Can't Be Fucked
+S" /dev/urandom" R/O OPEN-FILE DROP DUP
+XORSHIFT128 4 CELLS ROT READ-FILE 2DROP
+CLOSE-FILE DROP
 
-VARIABLE RANDOM_BUF_IDX
-
-: REFILL_RANDOM
-	RANDOM_BUF 512 URANDOM_FD READ-FILE 2DROP
-;
-REFILL_RANDOM
-
-: (RANDOM)
-	RANDOM_BUF_IDX DUP @ DUP ( *rbi rbi rbi )
-	RANDOM_BUF + @ ( *rbi rbi v )
-	\.S CR
-	-ROT 4+ DUP 512 >= IF
-		\." refill random buffer"
-		REFILL_RANDOM
-		DROP 0 SWAP !
-	ELSE
-		SWAP !
-	THEN
-;
-
-2 CELLS ALLOT CONSTANT XORSHIFT64
+DECIMAL
 
 : CYCLE_XORSHIFT
-	XORSHIFT64 2@ 2DUP
-	( lo hi lo hi )
-	13 << SWAP DUP 13 << SWAP 19 >>
-	( lo hi hi<<13 lo<<13 lo>>19 )
-	ROT OR
-	( lo hi lo<<13 hi<<13c )
+	XORSHIFT128 DUP
+	3 CELLS + @
+	SWAP @
+	( t s )
+	XORSHIFT128 HERE @ 3 MEMCPY \ 32 bit shift
+	HERE @ XORSHIFT128 4+ 3 MEMCPY
+
+	SWAP
+	DUP 11 << XOR DUP 8 >> XOR ( s t )
+	OVER 19 >> XOR XOR
+	XORSHIFT128 !
 ;
+
+: RANDOM XORSHIFT128 @ CYCLE_XORSHIFT ;
 
 ( dice words for a thing i did once )
 
@@ -42,7 +31,7 @@ REFILL_RANDOM
 	0 SWAP ( A acc B )
 	DFOR
 		>R OVER ( A acc A )
-		(RANDOM) SWAP UMOD ( A acc roll )
+		RANDOM SWAP .S CR UMOD ( A acc roll )
 		+ R>
 	REPEAT
 	NIP

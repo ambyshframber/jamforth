@@ -189,6 +189,7 @@ HERE @
 \	-- compiles to: --> condition 0BRANCH OFFSET2 loop-part BRANCH OFFSET
 \	where OFFSET points back to condition (the beginning) and OFFSET2 points to after the whole piece of code
 \ So this is like a while (condition) { loop-part } loop in the C language
+\ Compare this to IF. You might notice something interesting!
 : WHILE IMMEDIATE
 	' 0BRANCH ,	\ compile 0BRANCH
 	HERE @		\ save location of the offset2 on the stack
@@ -352,12 +353,12 @@ HERE @
 ( This word returns the width (in characters) of an unsigned number in the current base )
 : UWIDTH
 	( n )
-    1 BASE @ ROT
+	1 BASE @ ROT
 	( ctr base n )
-    BEGIN OVER U/ ?DUP WHILE \ no longer recursive!
-        ROT 1+ -ROT
-    REPEAT
-    DROP
+	BEGIN OVER U/ ?DUP WHILE \ no longer recursive!
+        	ROT 1+ -ROT
+	REPEAT
+	DROP
 ;
 
 : U.R		( u width -- )
@@ -1712,6 +1713,7 @@ HERE @
 	enough to write a few assembler primitives below.
 )
 
+(
 HEX
 
 ( Equivalent to the NEXT macro )
@@ -1832,6 +1834,7 @@ DECIMAL
 ;
 
 HIDE =NEXT
+)
 
 (
 	NOTES ----------------------------------------------------------------------

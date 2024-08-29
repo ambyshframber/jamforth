@@ -17,15 +17,15 @@
 
 : MKXDBC \ binary commutative
 	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , ' >X , FIND >CFA , ' X> , ' EXIT ,
+	[[ >X >X ]] FIND >CFA , [[ X> EXIT ]]
 ;
 : MKXDBN \ binary non-commutative
 	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , ' >X , ' XSWAP , FIND >CFA , ' X> , ' EXIT ,
+	[[ >X >X XSWAP ]] FIND >CFA , [[ X> EXIT ]]
 ;
 : MKXDU \ unary
 	WORD 2DUP COUNTC DROP CREATE DOCOL ,
-	' >X , FIND >CFA , ' X> , ' EXIT ,
+	' >X , FIND >CFA , [[ X> EXIT ]]
 ;
 
 MKXDBC XF+
@@ -50,7 +50,7 @@ MKXDBN XFLOGN
 : FSIGNUM [ HEX 80000000 DEC ], AND 31 >> NOT ;
 
 : XF**I ( D: b -- , F: a -- a**b )
-	XF1 DFOR
+	X1. DFOR
 		XOVER XF*
 	REPEAT
 	XSWAP XDROP
@@ -63,8 +63,8 @@ MKXDBN XFLOGN
 	x87 actually provides instructions for loading zero and one, so it would be a shame not to use them.
 )
 
-: F0 XF0 X> ;
-: F1 XF1 X> ;
+: 0. X0. X> ;
+: 1. X1. X> ;
 : FPI XFPI X> ;
 
 (
@@ -91,9 +91,9 @@ MKXDBN XFLOGN
 ;
 : FLT XFLT X> ;
 
-: INTEGER NUMBER ;
+: INTEGER (NUMBER) ;
 
-: NUMBER ( a l -- n x ) \ x is number of unparsed characters
+: (NUMBER) ( a l -- is_float n x ) \ x is number of unparsed characters
 	OVER C@ [CHAR] - = IF \ do negativeness manually
 		COUNTC DROP
 		1
@@ -102,11 +102,11 @@ MKXDBN XFLOGN
 	THEN
 	-ROT
 
-	2DUP NUMBER ( neg a l n x )
+	2DUP INTEGER ( neg a l n x )
 	?DUP UNLESS
 		( neg a l n )
-		\ number parsed fully
-		-ROT 2DROP SWAP IFTHEN NEGATE 0 EXIT
+		\ number parsed fully - ie. is an int
+		-ROT 2DROP SWAP IFTHEN NEGATE 0 0 -ROT EXIT
 	THEN
 
 	SWAP BASE @ / >R \ correct and stash value
@@ -114,26 +114,31 @@ MKXDBN XFLOGN
 	TUCK - ( neg a l2 y )
 
 	ROT + DUP C@ [CHAR] . = UNLESS
+		\ not a valid float
 		ROT DROP
-		DROP R> SWAP EXIT
+		DROP R> SWAP 0 -ROT EXIT
 	THEN
 
 	SWAP COUNTC DROP ( neg a l )
 
 	?DUP UNLESS \ length of frac part is 0
-		DROP R> SWAP IFTHEN NEGATE I>F 0 EXIT
+		DROP R> SWAP IFTHEN NEGATE I>F 0 1 -ROT EXIT
 	THEN
 
-	DUP -ROT NUMBER ( neg l n2 x )
+	DUP -ROT INTEGER ( neg l n2 x )
 
 	?DUP UNLESS \ fully parsed
 		( neg l n2 )
-		SWAP R> -ROT FLT SWAP IFTHEN FNEGATE 0 EXIT
+		SWAP R> -ROT FLT SWAP IFTHEN FNEGATE 0 1 -ROT EXIT
 	THEN
 
 	( neg l n2 x )
-	ROT DROP ROT DROP RDROP
+	ROT DROP ROT DROP RDROP 0 -ROT
 ;
+
+: FLOAT (NUMBER) SWAP ROT ULTHEN I>F SWAP ;
+
+: NUMBER (NUMBER) ROT DROP ;
 LATEST @ >CFA NUMBERCB !
 
 \ "sf" here means "standard form"

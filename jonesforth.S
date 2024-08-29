@@ -500,8 +500,9 @@
 	.align 4
 DOCOL:
 	PUSHRSP %esi		// push %esi on to the return stack
-	addl $4,%eax		// %eax points to codeword, so make
-	movl %eax,%esi		// %esi point to first data word
+	//addl $4,%eax		// %eax points to codeword, so make
+	//movl %eax,%esi		// %esi point to first data word
+	lea 4(%eax),%esi
 	NEXT
 
 /*
@@ -826,7 +827,7 @@ code_\label :			// assembler code follows
 	pop %ebx
 	pop %eax
 	xor %edx,%edx
-	idivl %ebx
+	divl %ebx
 	push %edx		// push remainder
 	push %eax		// push quotient
 	NEXT
@@ -1044,6 +1045,27 @@ code_\label :			// assembler code follows
 	pushl %eax
 	NEXT
 
+/*
+	defcode "D<<",3,,DSFTL // l h cnt -- you get the idea
+	pop %ecx // count
+	pop %ebx // hi
+	pop %eax // lo
+	shld %ecx,%eax,%ebx
+	shl %ecx,%eax
+	push %eax
+	push %ebx
+	NEXT
+	defcode "D>>",3,,DSFTR // l h cnt -- you get the idea
+	pop %ecx // count
+	pop %ebx // hi
+	pop %eax // lo
+	shrd %ecx,%ebx,%eax
+	shl %ecx,%ebx
+	push %eax
+	push %ebx
+	NEXT
+*/
+
 	defcode "BSR",3,,BSR
 	bsr (%esp),%eax
 	mov %eax,(%esp)
@@ -1052,7 +1074,7 @@ code_\label :			// assembler code follows
 /*
 	FLOATING POINT ----------------------------------------------------------------------
 
-	Floating point is implemented using the x87 instruction set. Back in the Old Days, the x87 was a coprocessor that sat next to your x86 CPU and did floating point operations. Since the i486, it's been included inside the processor itself, and it was superseded by SSE in the late 90s. I'm using it here because it's slightly simpler to understand and uses a stack architecture.
+	Floating point is implemented using the x87 instruction set. Back in the Old Days, the x87 was a coprocessor that sat next to your x86 CPU and did floating point operations. Since the i486, it's been included inside the processor itself, and it was superseded by MMX and then SSE in the 1990s. I'm using it here because it's slightly simpler to understand and uses a stack architecture.
 
 	The x87 has 8 80-bit registers that work as a stack. This is why you don't see operands on many of the x87 instructions used here - they operate on the top values of the stack, just like in FORTH. The words defined here all operate directly on the x87 stack, and are (mostly) prefixed with X (for x87). In allyforth.f I define some convenience functions so you don't have to keep moving things back and forth between the two stacks. The idea is that if you're doing lightweight calculations you can just work directly from the data stack, but when speed/precision are desired, you can keep values inside the x87.
 
@@ -1069,10 +1091,10 @@ code_\label :			// assembler code follows
 	fildl (%esp)		// take a 32-bit int from the data stack, convert it to a float, and push it to the x87
 	add $4,%esp
 	NEXT
-	defcode "XF1",3,,FLD1_	// load constant 1
+	defcode "X1.",3,,FLD1_	// load constant 1
 	fld1
 	NEXT
-	defcode "XF0",3,,FLDZ_	// load constant 0
+	defcode "X0.",3,,FLDZ_	// load constant 0
 	fldz
 	NEXT
 	defcode "XFPI",4,,FLDPI_
@@ -1301,6 +1323,15 @@ code_\label :			// assembler code follows
 	ffree %st(0)
 	fincstp
 	NEXT
+	defcode "XF2/",4,,XFHALF
+	fld1
+	fchs
+	fxch
+	fscale
+	fxch
+	ffree %st(0)
+	fincstp
+	NEXT
 	
 	defcode "XFSIN",5,,XFSIN
 	fsin
@@ -1473,7 +1504,7 @@ code_\label :			// assembler code follows
 	NEXT
 
 /* and CMOVE is a block copy operation. */
-	defcode "CMEMCPY",7,,CMOVE
+	defcode "CMEMCPY",7,,CMEMCPY
 	mov %esi,%edx		// preserve %esi
 	pop %ecx		// length
 	pop %edi		// destination address
@@ -1481,7 +1512,7 @@ code_\label :			// assembler code follows
 	rep movsb		// copy source to destination
 	mov %edx,%esi		// restore %esi
 	NEXT
-	defcode "MEMCPY",6,,MOVE
+	defcode "MEMCPY",6,,MEMCPY
 	mov %esi,%edx		// preserve %esi
 	pop %ecx		// length
 	pop %edi		// destination address
@@ -1554,8 +1585,8 @@ var_\name :
 	defvar "BASE",4,,BASE,10
 
 	defvar "KEYCB",5,,KEYCB,0
-	defvar "PARSEERRCB",10,,PARSEERRCB,0
-	defvar "NUMBERCB",8,,NUMBERCB,NUMBER
+	defvar "TEXTERRCB",9,,TEXTERRCB,0
+	defvar "NUMBERCB",8,,NUMBERCB,NUMBER_INNER
 
 /*
 	BUILT-IN CONSTANTS ----------------------------------------------------------------------
@@ -1906,6 +1937,11 @@ word_buffer:
 	partial value if there was an error.
 */
 	defcode "NUMBER",6,,NUMBER
+	mov var_NUMBERCB,%eax
+	call CALLA2F
+	NEXT
+
+	defcode "(NUMBER)",8,,NUMBER_INNER
 	pop %ecx		// length of string
 	pop %edi		// start address of string
 	call _NUMBER
@@ -2739,13 +2775,25 @@ _INTERPRET: // %ecx = length, %edi = pointer to word
 	mov var_KEYCB,%eax
 	cmp $0,%eax
 	jz parseerr_default
-	mov var_PARSEERRCB,%eax
+	mov var_TEXTERRCB,%eax
 	call CALLA2F
 	POPRSP %eax
 	push %eax
 	ret	
 
 parseerr_default:
+	call _TEXTERR
+
+	POPRSP %eax
+	PUSH %eax
+	ret
+
+	defcode "TEXTERR",7,,TEXTERR
+	call _TEXTERR
+	NEXT
+
+_TEXTERR:
+	mov $2,%ebx		// 1st param: stderr
 	mov (currkey),%ecx	// the error occurred just before currkey position
 	mov %ecx,%edx
 	sub $buffer,%edx	// %edx = currkey - buffer (length in buffer before currkey)
@@ -2760,9 +2808,6 @@ parseerr_default:
 	mov $1,%edx
 	mov $__NR_write,%eax	// write syscall
 	int $0x80
-
-	POPRSP %eax
-	PUSH %eax
 	ret
 
 	.section .rodata
@@ -2779,7 +2824,6 @@ interpret_is_lit:
 	QOI ----------------------------------------------------------------------
 
 	QOI is a compressed image format.
-*/
 
 	defcode "(QOI_ENC_INIT)",14,,QOI_ENC_INIT_F // ( h w *buf *q )
 	call qoi_enc_init
@@ -2799,6 +2843,7 @@ interpret_is_lit:
 	add $4,%esp
 	mov %eax,(%esp)
 	NEXT
+*/
 
 /*
 	ODDS AND ENDS ----------------------------------------------------------------------

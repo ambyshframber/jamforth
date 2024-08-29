@@ -13,6 +13,10 @@
 	OVER @ ROT 4+ ROT 1- ROT
 ;
 
+: @4+ ( p -- p+4 *p ) \ post-increment fetch
+	DUP 4+ SWAP @
+;
+
 : 2@ DUP @ SWAP 4+ @ ;
 : 2? 2@ SWAP . . ;
 : 2! TUCK 4+ ! ! ;
@@ -32,12 +36,21 @@
 : HU. BASE @ HEX SWAP U. BASE ! ;
 
 : # IMMEDIATE
-	." # executing" CR
 	WORD NUMBER DROP
-	DUP . CR
 	STATE @ IF [COMPILE] LITERAL THEN
 ;
-: H# IMMEDIATE BASE @ HEX [COMPILE] # BASE ! ;
+: H# IMMEDIATE
+	BASE @ HEX
+	[COMPILE] #
+	STATE @ ULTHEN SWAP
+	BASE !
+;
+: B# IMMEDIATE
+	BASE @ BINARY
+	[COMPILE] #
+	STATE @ ULTHEN SWAP
+	BASE !
+;
 
 : '\r' 13 ;
 : '\t' 9 ;
@@ -309,9 +322,12 @@ FORGET GEN_SFIGS
 ;
 
 : DC_CELLS ( addr len ) \ len is number of cells, not number of bytes
+	BASE @ -ROT HEX 
 	BEGIN ?DUP WHILE
+		OVER 8 U.R SPACE
 		COUNT4 DC_CELL
 	REPEAT
+	DROP BASE !
 ;
 
 : DC_REP ( addr )
@@ -324,9 +340,39 @@ FORGET GEN_SFIGS
 ;
 
 (
+	INLINING ----------------------------------------------------------------------
+
+	Inlining entire Forth words is harder than it looks. It's practically impossible to know when a Forth word ends without having something in the header that tells you. Which unfortunately, we don't.
+
+	So, I'm not going to try. Instead, I provide ways to inline specific sequences of words using [[ and ]]. Where you would go "' A , ' B ," you can instead go "[[ A B ]]". Much clearer.
+)
+
+: ([[)
+	R> @4+ ( p len )
+	DFOR
+		SWAP @4+ , SWAP
+	REPEAT
+	>R
+;
+: [[ IMMEDIATE
+	' ([[) ,
+	HERE @
+	0 ,
+;
+: ]] IMMEDIATE
+	DUP
+	HERE @ SWAP - 2 >> 1-
+	SWAP !
+;
+
+(
 	THE ENVIRONMENT, CONTINUED ----------------------------------------------------------------------
 
-	Jones provides us with the ability to fetch arguments, but not environment variables. 
+	Jones provides us with the ability to fetch arguments, but not environment variables. The environ is a null-terminated array of pointers to cstrings of the form "NAME=VALUE". I know, it sucks.
+	
+	ENV= compares a string "NAME" to a cstring "NAME=.*". Hopefully you can see why this is useful. ENVVAR checks every environment variable in this manner, then if it finds one that matches, returns the value as a string.
+
+	I also define ZTELL here, because it was useful for debugging ENV= and ENVVAR and I thought it was worth keeping around once I was done.
 )
 
 : ZTELL DUP STRLEN TELL ;
@@ -382,12 +428,40 @@ FORGET GEN_SFIGS
 	Here's a little secret that the man pages won't tell you: getcwd doesn't return a pointer to a cstring, it returns a length (including the null terminator). Presumably, the difference is so that glibc's wrapper function can return the address of a dynamically allocated buffer if necessary.
 )
 
-: GETCWD ( -- a u (if success) | 0 errno (if not) )
+: GETCWD ( -- a u 0 (if success) | 0 0 errno (if not) )
 	4096 HERE @ SYS_GETCWD SYSCALL2
 	DUP 0< IF
-		NEGATE 0 SWAP
+		NEGATE 0 0 ROT
 	ELSE
-		HERE @ SWAP 1-
+		HERE @ SWAP 1- 0
+	THEN
+;
+
+: CWD?
+	GETCWD ?DUP IF
+		S" CWD?" PERROR
+		2DROP
+	ELSE TELL SPACE THEN
+;
+: CD
+	WORD OVER C@ [CHAR] / = IF
+		CHDIR ?DUP IF S" CD: CHDIR" PERROR THEN
+		EXIT
+	THEN
+	( a1 u1 )
+	GETCWD ?DUP IF
+		S" CD: GETCWD" PERROR 2DROP
+	ELSE
+		2DUP + [CHAR] / SWAP !
+		1+
+		( a1 u1 a2 u2 )
+		2DUP +
+		( a1 u1 a2 u2 dest )
+		-ROT >R >R
+		SWAP DUP >R
+		CMEMCPY
+		R> R> SWAP R> +
+		CHDIR ?DUP IF S" CD: CHDIR" PERROR THEN
 	THEN
 ;
 
@@ -420,12 +494,12 @@ FORGET GEN_SFIGS
 	NEGATE
 ;
 
-: STAT_SIZE ( *stat -- u )
-	[ 5 CELLS ], + @
+: STAT_SIZE ( -- u )
+	HERE @ [ 5 CELLS ], + @
 ;
 
 (
-	Here's where things get really interesting. mmap is a Linux system call that maps a file into the address space of a process.
+	Here's where things get really interesting. mmap is a Linux system call that maps a file into the address space of a process. It seems like a more complicated read(2) at first, but actually turns out to be pretty useful, because you don't need to find anywhere to put the file contents. This will come in handy later.
 )
 
 : PAGEALIGNED
@@ -453,7 +527,7 @@ FORGET GEN_SFIGS
 	DUP FSTAT ?DUP IF
 		0 SWAP EXIT
 	THEN
-	HERE @ STAT_SIZE
+	STAT_SIZE
 	TUCK
 	MAP_PRIVATE
 	PROT_READ
@@ -597,7 +671,7 @@ VARIABLE KEY_SOURCE_IDX -1 KEY_SOURCE_IDX ! \ always equal to # of sources - 1
 	Jonesforth's builtin parse error reads from its own buffer, which means we need to replace it with our own. This function prints at most 40 characters leading up to the read index of the current KEY_SOURCE.
 )
 
-: BUFPARSEERR
+: BUFTEXTERR
 	KEY_SOURCE
 	DUP @ SWAP 8 + @
 	( addr idx )
@@ -607,7 +681,15 @@ VARIABLE KEY_SOURCE_IDX -1 KEY_SOURCE_IDX ! \ always equal to # of sources - 1
 	TELL
 ;
 
-LATEST @ >CFA PARSEERRCB !
+LATEST @ >CFA TEXTERRCB !
+
+: TEXTERR
+	KEYCB @ IF
+		TEXTERRCB @ EXECUTE
+	ELSE
+		TEXTERR
+	THEN
+;
 
 (
 	DEPENDENCY CHECKS ----------------------------------------------------------------------
@@ -652,6 +734,13 @@ LATEST @ >CFA PARSEERRCB !
 	ARGC 1 > IF
 		1 ARGV (LOAD)
 	THEN
+;
+
+(
+	This is a hack to allow running Forth programs as posix executable text scripts. I'm going to assume here you know how those work, so I won't explain them. In short, start a Forth program with "#!/bin/env jamforth" on a line by itself, and it will work fine. Of course, replace "jamforth" with whatever you have this whole mess called.
+)
+: #!/bin/env
+	BEGIN KEY '\n' = UNTIL
 ;
 
 DEC

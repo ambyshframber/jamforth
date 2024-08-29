@@ -9,8 +9,8 @@ all:	jonesforth
 
 # --verbose -Wl,--verbose
 
-jonesforth: jonesforth.S qoi.c
-	gcc -m32 -nostdlib -static $(BUILD_ID_NONE) -I /usr/include/x86_64-linux-gnu -o $@ jonesforth.S qoi.c
+jonesforth: jonesforth.S
+	gcc -m32 -nostdlib -static $(BUILD_ID_NONE) -I /usr/include/x86_64-linux-gnu -o $@ jonesforth.S
 
 run: all
 	cat jonesforth.f allyforth.f $(PROG) - | ./jonesforth
