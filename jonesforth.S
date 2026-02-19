@@ -1699,6 +1699,16 @@ var_\name :
 	addl $4,%ebp		// pop return stack and throw away
 	NEXT
 
+	defcode "RSP+",4,,RSPADD
+	pop %eax
+	add %eax,%ebp
+	NEXT
+
+	defcode "RSP-",4,,RSPSUB
+	pop %eax
+	sub %eax,%ebp
+	NEXT
+
 /*
 	PARAMETER (DATA) STACK ----------------------------------------------------------------------
 
@@ -2677,7 +2687,7 @@ ptr_RETF2A: // this is needed so that it looks like you're executing a word. it 
 	defword "QUIT",4,,QUIT
 	.int RZ,RSPSTORE	// R0 RSP!, clear the return stack
 	.int INTERPRET		// interpret the next word
-	.int BRANCH,-8		// and loop (indefinitely)
+	.int BRANCH,-16		// and loop (indefinitely). make sure to loop back to the start so the return stack doesn't leak
 
 /*
 	This interpreter is pretty simple, but remember that in FORTH you can always override

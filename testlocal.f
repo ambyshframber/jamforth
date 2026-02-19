@@ -1,0 +1,9 @@
+LOADLIB local.f
+
+: BEANS
+	LOCAL A LOCAL B ENDLOCALS
+	10 L! B
+	L@ B
+;
+
+\SEE BEANS
